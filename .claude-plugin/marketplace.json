@@ -1,8 +1,8 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "supercharge",
+  "name": "knowledge",
   "owner": {
-    "name": "Eneko"
+    "name": "eneko-codes"
   },
   "plugins": [
     {
@@ -10,7 +10,7 @@
       "description": "Scans external documentation and generates hierarchical documentation plugins",
       "version": "1.0.0",
       "author": {
-        "name": "Eneko"
+        "name": "eneko-codes"
       },
       "source": "./plugins/doc-scanner",
       "category": "development",

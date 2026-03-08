@@ -3,7 +3,7 @@
   "description": "Scans external documentation and generates hierarchical documentation plugins",
   "version": "1.0.0",
   "author": {
-    "name": "Eneko"
+    "name": "eneko-codes"
   },
   "keywords": ["documentation", "crawler", "plugin-generator", "docs"]
 }

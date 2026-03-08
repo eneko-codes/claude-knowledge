@@ -1,4 +1,4 @@
-# supercharge
+# knowledge
 
 A Claude Code plugin marketplace for generating documentation plugins from external documentation sites.
 
@@ -212,13 +212,13 @@ No additional system dependencies needed. Playwright's Chromium bundle is self-c
 ### Step 1: Add the Marketplace
 
 ```bash
-claude /plugin marketplace add https://github.com/eneko-codes/claude-plugins
+claude /plugin marketplace add https://github.com/eneko-codes/claude-knowledge
 ```
 
 ### Step 2: Install the Plugin
 
 ```bash
-claude /plugin install doc-scanner@supercharge
+claude /plugin install doc-scanner@knowledge
 ```
 
 ### Step 3: Run Setup (One-Time)
@@ -229,7 +229,7 @@ The first time you use doc-scanner, Claude will run the setup script automatical
 <summary><strong>macOS / Linux</strong></summary>
 
 ```bash
-cd ~/.claude/plugins/cache/supercharge/*/plugins/doc-scanner/skills/doc-scanner/scripts
+cd ~/.claude/plugins/cache/knowledge/*/plugins/doc-scanner/skills/doc-scanner/scripts
 bash setup.sh
 ```
 
@@ -239,7 +239,7 @@ bash setup.sh
 <summary><strong>Windows (PowerShell)</strong></summary>
 
 ```powershell
-cd $env:USERPROFILE\.claude\plugins\cache\supercharge\*\plugins\doc-scanner\skills\doc-scanner\scripts
+cd $env:USERPROFILE\.claude\plugins\cache\knowledge\*\plugins\doc-scanner\skills\doc-scanner\scripts
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -306,7 +306,7 @@ plugins/docs-sqlc/
 After doc-scanner generates a plugin, install it:
 
 ```bash
-claude /plugin install docs-sqlc@supercharge
+claude /plugin install docs-sqlc@knowledge
 ```
 
 Then ask Claude questions about the library — it will automatically use the documentation:

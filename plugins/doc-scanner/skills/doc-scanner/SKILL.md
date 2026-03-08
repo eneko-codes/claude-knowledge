@@ -116,7 +116,7 @@ Add the new plugin to the root `marketplace.json`:
   "name": "docs-<library>",
   "description": "<Library> documentation reference",
   "version": "1.0.0",
-  "author": { "name": "Eneko" },
+  "author": { "name": "eneko-codes" },
   "source": "./plugins/docs-<library>",
   "category": "development",
   "keywords": ["documentation", "<library>"]
@@ -127,7 +127,7 @@ Report the final results to the user:
 - Total pages indexed
 - Plugin directory location
 - Any warnings or manual fixes applied
-- Suggest testing with: `claude /plugin install docs-<library>@supercharge`
+- Suggest testing with: `claude /plugin install docs-<library>@knowledge`
 
 ## Script Reference
 
