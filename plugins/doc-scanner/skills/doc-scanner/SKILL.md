@@ -29,10 +29,12 @@ Follow these steps in order. Do not skip steps. Run each script and verify its o
 ### Step 1: Gather Parameters
 
 Ask the user for:
-- **Library name** — short identifier (e.g., `sqlc`, `goose`, `htmx`)
+- **Library name** — short identifier (e.g., `sqlc`, `goose`, `laravel`)
 - **Documentation root URL** — the starting page to crawl (e.g., `https://docs.sqlc.dev/en/stable/`)
 - **Path prefix restriction** — whether to restrict crawling to the URL path prefix (default: yes)
 - **Version label** — documentation version if applicable (default: `latest`)
+
+**Versioning:** When the user specifies a version other than `latest`, the generated plugin includes the version in its name. For example, `laravel` version `11` produces plugin `docs-laravel-11` with skill `laravel-11-docs`. This allows multiple versions to coexist — the user can have `docs-laravel-11` and `docs-laravel-12` installed simultaneously. Always ask about version when the documentation URL contains a version indicator (e.g., `/v2/`, `/11.x/`, `/en/stable/`).
 
 ### Step 2: Crawl Documentation Pages
 
@@ -109,25 +111,28 @@ If validation fails, fix the identified gaps (re-run extract for missing pages, 
 
 ### Step 6: Register and Finalize
 
-Add the new plugin to the root `marketplace.json`:
+Add the new plugin to the root `marketplace.json`. Use the versioned plugin name when version is not `latest`:
 
 ```json
 {
-  "name": "docs-<library>",
-  "description": "<Library> documentation reference",
+  "name": "docs-<library>-<version>",
+  "description": "<Library> (<version>) documentation reference",
   "version": "1.0.0",
   "author": { "name": "eneko-codes" },
-  "source": "./plugins/docs-<library>",
+  "source": "./plugins/docs-<library>-<version>",
   "category": "development",
   "keywords": ["documentation", "<library>"]
 }
 ```
 
+For `latest` version, omit the version suffix (e.g., `docs-<library>`).
+
 Report the final results to the user:
 - Total pages indexed
+- Plugin name (including version if applicable)
 - Plugin directory location
 - Any warnings or manual fixes applied
-- Suggest testing with: `claude /plugin install docs-<library>@knowledge`
+- Suggest testing with: `claude /plugin install docs-<library>-<version>@knowledge`
 
 ## Script Reference
 

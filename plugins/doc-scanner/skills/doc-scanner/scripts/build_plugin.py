@@ -255,12 +255,12 @@ def generate_sitemap(pages, library_name):
     return "\n".join(lines)
 
 
-def generate_skill_md(library_name, pages, source_url, version, file_listing):
+def generate_skill_md(library_name, versioned_library, plugin_name, pages, source_url, version, file_listing):
     """Generate the SKILL.md index file for the documentation plugin.
 
     SKILL.md is the most important file in the plugin — it's what Claude reads
     first when the skill is activated. It contains:
-    - Frontmatter with trigger phrases for skill activation
+    - Frontmatter with trigger phrases for skill activation (version-aware)
     - Source URL and version metadata
     - Directory structure overview
     - Quick reference for the most common API functions
@@ -284,11 +284,25 @@ def generate_skill_md(library_name, pages, source_url, version, file_listing):
         count = len(groups[category])
         category_summary += f"- **{output_dir}/**: {count} {category.replace('-', ' ')} pages\n"
 
+    # Build version-specific trigger phrases for the SKILL.md description.
+    # When versioned, include phrases like "laravel 11 docs" so Claude picks
+    # the right version. When "latest", omit version from triggers.
+    if version and version != "latest":
+        version_triggers = (
+            f'"{library_name} {version}", "{library_name} {version} docs", '
+            f'"{library_name} version {version}"'
+        )
+    else:
+        version_triggers = ""
+
     return render_template(
         template,
         library_name=library_name,
+        versioned_library=versioned_library,
+        plugin_name=plugin_name,
         library_name_title=library_name.replace("-", " ").title(),
         version=version,
+        version_triggers=version_triggers,
         source_url=source_url,
         total_pages=len(pages),
         category_summary=category_summary,
@@ -297,15 +311,18 @@ def generate_skill_md(library_name, pages, source_url, version, file_listing):
     )
 
 
-def generate_plugin_json(library_name, version, source_url):
+def generate_plugin_json(plugin_name, library_name, version, source_url):
     """Generate .claude-plugin/plugin.json for the documentation plugin.
 
     This is the plugin metadata file that Claude Code reads to identify and
     load the plugin. It must contain name, description, version, and author.
+    Uses plugin_name (version-aware) for the "name" field so versioned plugins
+    have distinct identities (e.g., "docs-laravel-11" vs "docs-laravel-12").
     """
     template = load_template("plugin_json_template.json")
     return render_template(
         template,
+        plugin_name=plugin_name,
         library_name=library_name,
         library_name_title=library_name.replace("-", " ").title(),
         version=version,
@@ -334,14 +351,25 @@ def build_plugin(args):
     version = args.version
     source_url = args.source_url
 
+    # Version-aware naming: when version is not "latest", append it to the
+    # plugin name and skill name so multiple versions can coexist.
+    # e.g., "laravel" + "11" → plugin "docs-laravel-11", skill "laravel-11-docs"
+    # e.g., "laravel" + "latest" → plugin "docs-laravel", skill "laravel-docs"
+    if version and version != "latest":
+        plugin_name = f"docs-{library}-{version}"
+        versioned_library = f"{library}-{version}"
+    else:
+        plugin_name = f"docs-{library}"
+        versioned_library = library
+
     # Default output location: alongside other plugins in the monorepo.
     # scripts/ → doc-scanner skill → doc-scanner plugin → plugins/ → docs-<lib>/
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = SCRIPT_DIR.parent.parent.parent.parent / f"docs-{library}"
+        output_dir = SCRIPT_DIR.parent.parent.parent.parent / plugin_name
 
-    log.info(f"Building plugin for '{library}' v{version}")
+    log.info(f"Building plugin '{plugin_name}' v{version}")
     log.info(f"Reading from: {extracted_dir}")
     log.info(f"Writing to: {output_dir}")
 
@@ -361,7 +389,9 @@ def build_plugin(args):
     # Set up the plugin directory structure following Claude Code plugin conventions:
     # .claude-plugin/plugin.json (required metadata)
     # skills/<name>/SKILL.md (required skill definition)
-    skill_name = f"{library}-docs"
+    # Skill name includes version when not "latest" so versioned plugins
+    # have distinct skill identifiers (e.g., "laravel-11-docs" vs "laravel-12-docs")
+    skill_name = f"{versioned_library}-docs"
     skill_dir = output_dir / "skills" / skill_name
     plugin_meta_dir = output_dir / ".claude-plugin"
     index_dir = skill_dir / "index"
@@ -416,13 +446,13 @@ def build_plugin(args):
     # Generate SKILL.md — the entry point Claude reads when the skill activates.
     # The file listing is sorted alphabetically for consistent, scannable output.
     file_listing = "\n".join(sorted(file_listing_lines))
-    skill_content = generate_skill_md(library, pages, source_url, version, file_listing)
+    skill_content = generate_skill_md(library, versioned_library, plugin_name, pages, source_url, version, file_listing)
     skill_path = skill_dir / "SKILL.md"
     skill_path.write_text(skill_content, encoding="utf-8")
     log.info(f"Wrote {skill_path}")
 
     # Generate plugin.json metadata
-    plugin_json_content = generate_plugin_json(library, version, source_url)
+    plugin_json_content = generate_plugin_json(plugin_name, library, version, source_url)
     plugin_json_path = plugin_meta_dir / "plugin.json"
     plugin_json_path.write_text(plugin_json_content, encoding="utf-8")
     log.info(f"Wrote {plugin_json_path}")

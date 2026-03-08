@@ -79,6 +79,29 @@ What functions does sqlc generate for a query?
 
 Claude reads the local docs instantly — no API calls, no waiting.
 
+### Versioned documentation
+
+When you specify a version, the plugin includes it in the name — multiple versions coexist side by side:
+
+```
+plugins/
+├── docs-laravel-11/     # from /docs/11.x/
+├── docs-laravel-12/     # from /docs/12.x/
+└── docs-sqlc/           # version "latest" — no suffix
+```
+
+```
+Scan Laravel 11 docs at https://laravel.com/docs/11.x/ with version 11
+Scan Laravel 12 docs at https://laravel.com/docs/12.x/ with version 12
+```
+
+```bash
+claude /plugin install docs-laravel-11@knowledge
+claude /plugin install docs-laravel-12@knowledge
+```
+
+Both are available simultaneously — Claude picks the right one based on context, or you can ask about a specific version.
+
 ---
 
 ## Installation

@@ -1,6 +1,6 @@
 {
-  "name": "docs-{library_name}",
-  "description": "{library_name_title} documentation reference",
+  "name": "{plugin_name}",
+  "description": "{library_name_title} documentation reference ({version})",
   "version": "{version}",
   "author": {
     "name": "eneko-codes"

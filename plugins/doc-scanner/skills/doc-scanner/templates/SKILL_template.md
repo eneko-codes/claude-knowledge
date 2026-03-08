@@ -1,17 +1,18 @@
 ---
-name: {library_name}-docs
+name: {versioned_library}-docs
 description: >
-  {library_name_title} documentation reference. Use when asked about {library_name},
+  {library_name_title} ({version}) documentation reference. Use when asked about {library_name},
   its API, configuration, usage patterns, or troubleshooting.
-  Version: {version}
+  {version_triggers}
 ---
 
-# {library_name_title} Documentation
+# {library_name_title} Documentation ({version})
 
 Complete reference for {library_name_title}, extracted from the official documentation.
 
 - **Source:** {source_url}
 - **Version:** {version}
+- **Plugin name:** {plugin_name}
 - **Total pages:** {total_pages}
 
 ## Directory Structure
