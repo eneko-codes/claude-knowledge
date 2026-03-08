@@ -4,9 +4,9 @@
 
 **Pre-built documentation plugins for Claude Code.**
 
-Install a plugin. Get instant, offline access to any library's docs.
+Install a plugin. Get instant access to any library's docs.
 
-No API calls. No latency. No setup.
+No extra API calls. No latency. No setup.
 
 [Available Docs](#available-documentation) ·
 [Install](#installation) ·
@@ -54,7 +54,7 @@ What CLI commands does goose support?
 Show me how to embed SQL migrations in Go
 ```
 
-That's it. Claude reads the docs from local files — instant answers, works offline.
+That's it. Claude reads the docs from local files — instant answers, no extra network calls.
 
 ### Versioned documentation
 
@@ -245,38 +245,21 @@ Claude Code can access docs two ways: **MCP servers** fetch pages in real-time, 
 - ~60% token overhead from protocol
 - One page at a time
 - Blocked by Cloudflare / bot detection
-- Requires internet
 
 </td>
 <td>
 
 - **<1ms** from local disk
-- **100% reliable** — no external deps
+- **100% reliable** — no extra external deps
 - **Zero overhead** — direct file reads
 - **Full docs map** via SKILL.md index
 - **Hierarchical** — `api/`, `concepts/`, `examples/`
-- **Works offline**
 
 </td>
 </tr>
 </table>
 
 > **Trade-off:** One-time crawl (5–30 min) to generate. Re-crawl when docs update — monthly is usually enough.
-
-<details>
-<summary><strong>Research and evidence</strong></summary>
-
-<br>
-
-1. **Anthropic uses the same pattern.** The official `claude-plugins-official` marketplace ships documentation as local skill files.
-
-2. **Better context utilization.** A SITEMAP.md gives Claude a complete docs map in ~2K tokens. MCP needs a tool call just to discover what pages exist.
-
-3. **Deterministic answers.** Local files return the same content every time. MCP varies due to CDN caching, A/B testing, and page updates.
-
-4. **Community convergence.** Multiple plugin developers independently converged on "crawl once, read locally."
-
-</details>
 
 ---
 
