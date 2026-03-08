@@ -98,4 +98,4 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error)
 
 - All content is extracted verbatim from the official documentation.
 - Code blocks are preserved exactly as they appear in the source.
-- If content seems outdated, re-run the doc-scanner to refresh.
+- If content seems outdated, re-run the doc-indexer to refresh.

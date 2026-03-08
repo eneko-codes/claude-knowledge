@@ -363,7 +363,7 @@ def build_plugin(args):
         versioned_library = library
 
     # Default output location: alongside other plugins in the monorepo.
-    # scripts/ → doc-scanner skill → doc-scanner plugin → plugins/ → docs-<lib>/
+    # scripts/ → doc-indexer skill → doc-indexer plugin → plugins/ → docs-<lib>/
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:

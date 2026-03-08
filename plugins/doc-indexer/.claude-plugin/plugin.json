@@ -1,6 +1,6 @@
 {
-  "name": "doc-scanner",
-  "description": "Scans external documentation and generates hierarchical documentation plugins",
+  "name": "doc-indexer",
+  "description": "Indexes external documentation and generates hierarchical documentation plugins",
   "version": "1.0.0",
   "author": {
     "name": "eneko-codes"

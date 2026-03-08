@@ -64,10 +64,10 @@ Claude picks the right version based on context, or you can ask about a specific
 
 ## Crawl Your Own Docs
 
-The `doc-scanner` plugin lets you generate documentation plugins for **any** site — useful for niche libraries, private docs, or libraries not yet in the marketplace.
+The `doc-indexer` plugin lets you generate documentation plugins for **any** site — useful for niche libraries, private docs, or libraries not yet in the marketplace.
 
 ```bash
-claude /plugin install doc-scanner@knowledge
+claude /plugin install doc-indexer@knowledge
 ```
 
 Then tell Claude:
@@ -79,11 +79,11 @@ Scan the documentation at https://docs.sqlc.dev/en/stable/ and generate a docs p
 Claude crawls the site, extracts content, builds the plugin, and validates coverage — all automatically.
 
 <details>
-<summary><strong>Prerequisites for doc-scanner</strong></summary>
+<summary><strong>Prerequisites for doc-indexer</strong></summary>
 
 <br>
 
-doc-scanner requires **Python 3.8+** and downloads a Chromium browser (~200MB) for crawling. Pre-built docs plugins have no prerequisites.
+doc-indexer requires **Python 3.8+** and downloads a Chromium browser (~200MB) for crawling. Pre-built docs plugins have no prerequisites.
 
 **macOS** — Python comes pre-installed on macOS 12.3+.
 
@@ -130,14 +130,14 @@ First-time setup creates a Python venv and downloads Chromium:
 **macOS / Linux**
 
 ```bash
-cd ~/.claude/plugins/cache/knowledge/*/plugins/doc-scanner/skills/doc-scanner/scripts
+cd ~/.claude/plugins/cache/knowledge/*/plugins/doc-indexer/skills/doc-indexer/scripts
 bash setup.sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-cd $env:USERPROFILE\.claude\plugins\cache\knowledge\*\plugins\doc-scanner\skills\doc-scanner\scripts
+cd $env:USERPROFILE\.claude\plugins\cache\knowledge\*\plugins\doc-indexer\skills\doc-indexer\scripts
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -151,7 +151,7 @@ playwright install chromium
 
 <br>
 
-doc-scanner runs four scripts in sequence:
+doc-indexer runs four scripts in sequence:
 
 ```
 crawl.py  ──>  extract.py  ──>  build_plugin.py  ──>  validate.py
@@ -176,7 +176,7 @@ crawl.py  ──>  extract.py  ──>  build_plugin.py  ──>  validate.py
 **macOS / Linux**
 
 ```bash
-cd plugins/doc-scanner/skills/doc-scanner/scripts
+cd plugins/doc-indexer/skills/doc-indexer/scripts
 source .venv/bin/activate
 
 python3 crawl.py https://pressly.github.io/goose/ \
@@ -195,7 +195,7 @@ python3 validate.py ../../../../../../plugins/docs-goose/ \
 **Windows (PowerShell)**
 
 ```powershell
-cd plugins\doc-scanner\skills\doc-scanner\scripts
+cd plugins\doc-indexer\skills\doc-indexer\scripts
 .\.venv\Scripts\Activate.ps1
 
 python crawl.py https://pressly.github.io/goose/ `

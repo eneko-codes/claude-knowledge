@@ -1,13 +1,13 @@
 ---
-name: doc-scanner
+name: doc-indexer
 description: >
-  Use when asked to scan documentation, generate a docs plugin, crawl documentation,
+  Use when asked to index documentation, generate a docs plugin, crawl documentation,
   index library docs, create a documentation plugin, or build docs for a library.
-  Trigger phrases: "scan documentation", "generate docs plugin", "crawl documentation",
+  Trigger phrases: "index documentation", "generate docs plugin", "crawl documentation",
   "index library docs", "create docs plugin", "build docs for".
 ---
 
-# Doc Scanner
+# Doc Indexer
 
 Generate a complete hierarchical documentation plugin by crawling an external documentation site.
 

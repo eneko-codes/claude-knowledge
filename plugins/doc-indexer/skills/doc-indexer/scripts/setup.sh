@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh — One-time environment setup for doc-scanner scripts.
+# setup.sh — One-time environment setup for doc-indexer scripts.
 #
 # Creates an isolated Python virtual environment in .venv/, installs all
 # dependencies from requirements.txt, and downloads the Chromium browser

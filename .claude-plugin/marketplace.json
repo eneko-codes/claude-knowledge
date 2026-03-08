@@ -17,13 +17,13 @@
       "keywords": ["documentation", "goose", "go", "migrations", "database"]
     },
     {
-      "name": "doc-scanner",
+      "name": "doc-indexer",
       "description": "Crawl any documentation site and generate a docs plugin (requires Python + Playwright)",
       "version": "1.0.0",
       "author": {
         "name": "eneko-codes"
       },
-      "source": "./plugins/doc-scanner",
+      "source": "./plugins/doc-indexer",
       "category": "development",
       "keywords": ["documentation", "crawler", "plugin-generator"]
     }
