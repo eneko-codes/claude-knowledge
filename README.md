@@ -4,7 +4,8 @@
 
 **Pre-built documentation plugins for Claude Code.**
 
-Install a plugin. Get instant access to any library's docs.
+Each plugin is a hierarchical skill with an index — Claude sees every available page
+and navigates directly to the right file. No searching, no guessing.
 
 No extra API calls. No latency. No setup.
 
