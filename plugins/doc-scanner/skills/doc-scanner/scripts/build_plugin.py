@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 """Plugin generator — assembles extracted content into a complete documentation plugin.
 
-Reads extracted JSON files, groups by category, generates markdown sub-files,
-SITEMAP.md, SKILL.md index, and plugin.json.
+Takes the per-page JSON files from extract.py and assembles them into a complete
+Claude Code documentation plugin with the standard directory structure:
+
+    plugins/docs-<library>/
+    ├── .claude-plugin/plugin.json        # Plugin metadata
+    └── skills/<library>-docs/
+        ├── SKILL.md                      # Index file Claude reads first
+        ├── index/SITEMAP.md              # Full page listing
+        ├── api/                          # API reference pages
+        ├── concepts/                     # Conceptual + tutorial pages
+        ├── examples/                     # Code-heavy example pages
+        └── warnings/WARNINGS.md          # Deprecation notices
+
+The generated SKILL.md is the entry point for Claude — it lists every sub-file
+so Claude can navigate to the relevant section based on the user's question.
 
 Usage:
     python3 build_plugin.py <library-name> <extracted-dir> [--version latest] [--source-url URL] [--output-dir DIR]
@@ -24,16 +37,21 @@ logging.basicConfig(
 )
 log = logging.getLogger("build_plugin")
 
+# Resolve paths relative to this script's location so the script works
+# regardless of the current working directory when invoked.
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = SCRIPT_DIR.parent / "templates"
 
-# Category → output directory mapping
+# Maps extract.py's page categories to output directory names.
+# "tutorial" merges into "concepts" because tutorials are conceptual in nature —
+# they explain how things work through guided examples, unlike pure "example"
+# pages which are mostly code with minimal prose.
 CATEGORY_DIRS = {
-    "api-reference": "api",
-    "conceptual": "concepts",
-    "tutorial": "concepts",
-    "example": "examples",
-    "warning": "warnings",
+    "api-reference": "api",        # Function signatures, type definitions, parameters
+    "conceptual": "concepts",      # Overviews, architecture, design explanations
+    "tutorial": "concepts",        # Step-by-step guides (merged with conceptual)
+    "example": "examples",         # Code-heavy pages with minimal prose
+    "warning": "warnings",         # Deprecation notices, breaking changes
 }
 
 
@@ -51,8 +69,16 @@ def parse_args():
     return p.parse_args()
 
 
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
 def load_extracted(extracted_dir):
-    """Load all extracted JSON files."""
+    """Load all extracted JSON files from the directory.
+
+    Files are sorted alphabetically for deterministic output — the same input
+    always produces the same plugin structure, making diffs meaningful.
+    """
     pages = []
     for filename in sorted(os.listdir(extracted_dir)):
         if not filename.endswith(".json"):
@@ -64,8 +90,17 @@ def load_extracted(extracted_dir):
     return pages
 
 
+# ---------------------------------------------------------------------------
+# Filename and grouping utilities
+# ---------------------------------------------------------------------------
+
 def sanitize_filename(text):
-    """Convert a title or URL path to a safe filename."""
+    """Convert a page title to a safe, readable filename.
+
+    Transforms "Installing sqlc on macOS" → "installing-sqlc-on-macos".
+    Truncates at 80 characters to avoid filesystem path length limits
+    (especially relevant on Windows where MAX_PATH is 260 characters).
+    """
     safe = re.sub(r"[^a-zA-Z0-9._-]", "-", text.lower())
     safe = re.sub(r"-+", "-", safe).strip("-")
     if len(safe) > 80:
@@ -74,7 +109,11 @@ def sanitize_filename(text):
 
 
 def group_by_category(pages):
-    """Group pages by their documentation category."""
+    """Group extracted pages by their documentation category.
+
+    Returns a dict like {"api-reference": [page1, page2], "conceptual": [page3], ...}.
+    Pages without a category default to "conceptual".
+    """
     groups = defaultdict(list)
     for page in pages:
         category = page.get("category", "conceptual")
@@ -83,7 +122,15 @@ def group_by_category(pages):
 
 
 def find_top_signatures(pages, top_n=10):
-    """Find the most referenced function signatures across all pages."""
+    """Find the N most frequently appearing function signatures across all pages.
+
+    These are surfaced in the generated SKILL.md as a "Quick Reference" section
+    so Claude can immediately answer questions about common API functions without
+    reading through all sub-files.
+
+    We count occurrences across pages (not within a single page) because a
+    signature that appears on multiple pages is likely a core API function.
+    """
     sig_counts = Counter()
     for page in pages:
         for sig in page.get("signatures", []):
@@ -91,8 +138,18 @@ def find_top_signatures(pages, top_n=10):
     return [sig for sig, _ in sig_counts.most_common(top_n)]
 
 
+# ---------------------------------------------------------------------------
+# Template handling
+# ---------------------------------------------------------------------------
+
 def load_template(name):
-    """Load a template file."""
+    """Load a template file from the templates/ directory.
+
+    Templates use Python's str.format() syntax ({variable_name}) rather than
+    Jinja2 to avoid adding an extra dependency. This is sufficient for our
+    needs since we're doing simple variable substitution without loops or
+    conditionals.
+    """
     path = TEMPLATE_DIR / name
     if not path.exists():
         log.error(f"Template not found: {path}")
@@ -100,14 +157,26 @@ def load_template(name):
     return path.read_text(encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------
+# Content generation
+# ---------------------------------------------------------------------------
+
 def generate_section_file(page, library_name):
-    """Generate a markdown sub-file for a single page."""
+    """Generate a markdown sub-file for a single documentation page.
+
+    Each sub-file contains:
+    - The page title as an H1 heading
+    - A "Source:" link to the original URL (for reference/verification)
+    - The full extracted markdown content (verbatim, not summarized)
+    - Any deprecation warnings highlighted at the bottom
+    """
     template = load_template("section_template.md")
     title = page.get("title", "Untitled")
     url = page.get("url", "")
     markdown = page.get("markdown", "")
     warnings = page.get("warnings", [])
 
+    # Format warnings as a blockquote section if any exist
     warnings_block = ""
     if warnings:
         warnings_block = "\n\n> **Warnings:**\n" + "\n".join(f"> - {w}" for w in warnings)
@@ -121,7 +190,12 @@ def generate_section_file(page, library_name):
 
 
 def generate_warnings_file(pages):
-    """Generate a consolidated WARNINGS.md from all warning pages."""
+    """Generate a consolidated WARNINGS.md from all pages classified as "warning".
+
+    Rather than creating one file per warning page, we consolidate all deprecation
+    notices into a single WARNINGS.md. This makes it easy for Claude to scan all
+    warnings at once when a user asks about deprecated features.
+    """
     lines = ["# Warnings and Deprecation Notices\n"]
     for page in pages:
         title = page.get("title", "Untitled")
@@ -132,7 +206,8 @@ def generate_warnings_file(pages):
         if warnings:
             for w in warnings:
                 lines.append(f"- {w}")
-        # Also include the full markdown for context
+        # Include full markdown for context — warnings often need surrounding
+        # text to understand the migration path or replacement API.
         markdown = page.get("markdown", "")
         if markdown:
             lines.append(f"\n{markdown}")
@@ -140,11 +215,17 @@ def generate_warnings_file(pages):
 
 
 def generate_sitemap(pages, library_name):
-    """Generate index/SITEMAP.md listing all pages."""
+    """Generate index/SITEMAP.md — a complete listing of all documentation pages.
+
+    Groups pages by category with relative links to their content files.
+    This serves as the "table of contents" for the entire documentation plugin.
+    Claude reads this to understand what content is available before diving
+    into specific sub-files.
+    """
     lines = [f"# {library_name} Documentation Sitemap\n"]
     lines.append(f"Total pages: {len(pages)}\n")
 
-    # Group by category for organized listing
+    # Group by category for organized presentation
     groups = group_by_category(pages)
     for category in sorted(groups.keys()):
         cat_pages = groups[category]
@@ -153,6 +234,7 @@ def generate_sitemap(pages, library_name):
         for page in cat_pages:
             title = page.get("title", "Untitled")
             filename = sanitize_filename(title) + ".md"
+            # Relative path from index/ to the content directory
             filepath = f"../{output_dir}/{filename}"
             lines.append(f"- [{title}]({filepath})")
 
@@ -160,16 +242,27 @@ def generate_sitemap(pages, library_name):
 
 
 def generate_skill_md(library_name, pages, source_url, version, file_listing):
-    """Generate the SKILL.md index for the docs plugin."""
+    """Generate the SKILL.md index file for the documentation plugin.
+
+    SKILL.md is the most important file in the plugin — it's what Claude reads
+    first when the skill is activated. It contains:
+    - Frontmatter with trigger phrases for skill activation
+    - Source URL and version metadata
+    - Directory structure overview
+    - Quick reference for the most common API functions
+    - Complete file listing so Claude knows where to find every piece of content
+    """
     template = load_template("SKILL_template.md")
 
+    # Surface the top 5-10 most common function signatures as a quick reference.
+    # This lets Claude answer "what's the signature for X?" without reading sub-files.
     top_sigs = find_top_signatures(pages)
     quick_ref = ""
     if top_sigs:
         quick_ref = "\n## Quick Reference — Common Functions\n\n"
         quick_ref += "```\n" + "\n".join(top_sigs) + "\n```\n"
 
-    # Build category summary
+    # Build a summary of how many pages are in each content directory
     groups = group_by_category(pages)
     category_summary = ""
     for category in sorted(groups.keys()):
@@ -190,7 +283,11 @@ def generate_skill_md(library_name, pages, source_url, version, file_listing):
 
 
 def generate_plugin_json(library_name, version, source_url):
-    """Generate plugin.json for the docs plugin."""
+    """Generate .claude-plugin/plugin.json for the documentation plugin.
+
+    This is the plugin metadata file that Claude Code reads to identify and
+    load the plugin. It must contain name, description, version, and author.
+    """
     template = load_template("plugin_json_template.json")
     return template.format(
         library_name=library_name,
@@ -200,13 +297,29 @@ def generate_plugin_json(library_name, version, source_url):
     )
 
 
+# ---------------------------------------------------------------------------
+# Main build pipeline
+# ---------------------------------------------------------------------------
+
 def build_plugin(args):
+    """Orchestrate the full plugin build from extracted content.
+
+    Pipeline:
+    1. Load all extracted JSON files
+    2. Group pages by category
+    3. Create plugin directory structure
+    4. Generate content sub-files (one .md per page, warnings consolidated)
+    5. Generate index/SITEMAP.md (full page listing)
+    6. Generate SKILL.md (entry point with file index and quick reference)
+    7. Generate plugin.json (metadata)
+    """
     library = args.library_name
     extracted_dir = args.extracted_dir
     version = args.version
     source_url = args.source_url
 
-    # Determine output directory
+    # Default output location: alongside other plugins in the monorepo.
+    # scripts/ → doc-scanner skill → doc-scanner plugin → plugins/ → docs-<lib>/
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
@@ -224,12 +337,14 @@ def build_plugin(args):
 
     log.info(f"Loaded {len(pages)} pages")
 
-    # Group by category
+    # Group by category and log distribution
     groups = group_by_category(pages)
     for cat, cat_pages in sorted(groups.items()):
         log.info(f"  {cat}: {len(cat_pages)} pages")
 
-    # Create directory structure
+    # Set up the plugin directory structure following Claude Code plugin conventions:
+    # .claude-plugin/plugin.json (required metadata)
+    # skills/<name>/SKILL.md (required skill definition)
     skill_name = f"{library}-docs"
     skill_dir = output_dir / "skills" / skill_name
     plugin_meta_dir = output_dir / ".claude-plugin"
@@ -238,16 +353,18 @@ def build_plugin(args):
     for d in [plugin_meta_dir, index_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    # Create content directories and write sub-files
+    # Track all generated files for the SKILL.md file listing
     file_listing_lines = []
     written_files = []
 
+    # Generate content sub-files, organized by category into subdirectories
     for category, cat_pages in sorted(groups.items()):
         output_subdir = CATEGORY_DIRS.get(category, "concepts")
         content_dir = skill_dir / output_subdir
         content_dir.mkdir(parents=True, exist_ok=True)
 
-        # Special case: consolidate warnings into one file
+        # Warning pages get consolidated into a single WARNINGS.md rather than
+        # individual files, because deprecation info is most useful when viewed together.
         if category == "warning":
             warnings_content = generate_warnings_file(cat_pages)
             warnings_path = content_dir / "WARNINGS.md"
@@ -258,6 +375,7 @@ def build_plugin(args):
             log.info(f"  Wrote {warnings_path}")
             continue
 
+        # For all other categories: one markdown file per extracted page
         for page in cat_pages:
             title = page.get("title", "Untitled")
             filename = sanitize_filename(title) + ".md"
@@ -271,27 +389,29 @@ def build_plugin(args):
 
     log.info(f"Wrote {len(written_files)} content files")
 
-    # Generate SITEMAP.md
+    # Generate the SITEMAP.md index (complete page listing grouped by category)
     sitemap_content = generate_sitemap(pages, library)
     sitemap_path = index_dir / "SITEMAP.md"
     sitemap_path.write_text(sitemap_content, encoding="utf-8")
+    # Insert SITEMAP at the top of the file listing
     file_listing_lines.insert(0, f"- `index/SITEMAP.md` — Full sitemap of all {len(pages)} pages")
     log.info(f"Wrote {sitemap_path}")
 
-    # Generate SKILL.md
+    # Generate SKILL.md — the entry point Claude reads when the skill activates.
+    # The file listing is sorted alphabetically for consistent, scannable output.
     file_listing = "\n".join(sorted(file_listing_lines))
     skill_content = generate_skill_md(library, pages, source_url, version, file_listing)
     skill_path = skill_dir / "SKILL.md"
     skill_path.write_text(skill_content, encoding="utf-8")
     log.info(f"Wrote {skill_path}")
 
-    # Generate plugin.json
+    # Generate plugin.json metadata
     plugin_json_content = generate_plugin_json(library, version, source_url)
     plugin_json_path = plugin_meta_dir / "plugin.json"
     plugin_json_path.write_text(plugin_json_content, encoding="utf-8")
     log.info(f"Wrote {plugin_json_path}")
 
-    # Summary
+    # Final summary
     log.info("=" * 60)
     log.info(f"Plugin built successfully: {output_dir}")
     log.info(f"Total files: {len(written_files) + 3} (content + SITEMAP + SKILL + plugin.json)")
