@@ -33,8 +33,19 @@ Ask the user for:
 - **Documentation root URL** — the starting page to crawl (e.g., `https://docs.sqlc.dev/en/stable/`)
 - **Path prefix restriction** — whether to restrict crawling to the URL path prefix (default: yes)
 - **Version label** — documentation version if applicable (default: `latest`)
+- **Scope** — where to install the plugin (default: `user`)
 
 **Versioning:** When the user specifies a version other than `latest`, the generated plugin includes the version in its name. For example, `laravel` version `11` produces plugin `laravel-11-docs` with skill `laravel-11-docs`. This allows multiple versions to coexist — the user can have `laravel-11-docs` and `laravel-12-docs` installed simultaneously. Always ask about version when the documentation URL contains a version indicator (e.g., `/v2/`, `/11.x/`, `/en/stable/`).
+
+**Scope:** The plugin can be installed at three scopes:
+
+| Scope | Output directory | Who can use it | Committed to git? |
+|-------|-----------------|----------------|:--:|
+| **project** | `<project-root>/.claude/plugins/<name>-docs/` | Whole team | Yes — everyone on the project gets the docs |
+| **user** | `~/.claude/plugins/<name>-docs/` | Just you | No — available in all your projects |
+| **local** | `<project-root>/.claude/plugins/<name>-docs/` | Just you | No — add to `.gitignore` |
+
+Recommend **project** scope when the docs are relevant to the current project (e.g., the framework the project uses). This way the whole team benefits. Recommend **user** scope for general-purpose libraries the user works with across multiple projects.
 
 ### Step 2: Crawl Documentation Pages
 
@@ -77,19 +88,28 @@ If content looks incomplete or categories are wrong, the user may ask you to man
 
 ### Step 4: Build the Plugin
 
-Generate the complete plugin from extracted content:
+Generate the complete plugin from extracted content. The `--output-dir` depends on the scope chosen in Step 1:
 
+**Project or local scope:**
 ```bash
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
   --version <version-label> \
-  --output-dir <monorepo-root>/plugins/docs-<library>
+  --output-dir <project-root>/.claude/plugins/<name>-docs
 ```
 
-The output directory defaults to `../../plugins/docs-<library>` relative to the scripts directory, which places it alongside other plugins in the monorepo.
+**User scope:**
+```bash
+python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
+  --source-url <root-url> \
+  --version <version-label> \
+  --output-dir ~/.claude/plugins/<name>-docs
+```
+
+Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or `goose-docs`).
 
 **Verify output:**
-- Check the generated directory structure has: `.claude-plugin/plugin.json`, `skills/<library>-docs/SKILL.md`, subdirectories for content
+- Check the generated directory structure has: `.claude-plugin/plugin.json`, `skills/<name>-docs/SKILL.md`, subdirectories for content
 - Open the generated `SKILL.md` — confirm it lists every sub-file
 - Spot-check a few sub-files for content completeness
 
@@ -98,7 +118,7 @@ The output directory defaults to `../../plugins/docs-<library>` relative to the 
 Run the validator to ensure nothing was lost:
 
 ```bash
-python3 validate.py <monorepo-root>/plugins/docs-<library>/ \
+python3 validate.py <output-dir> \
   --sitemap /tmp/<library>-sitemap.json
 ```
 
@@ -109,30 +129,33 @@ python3 validate.py <monorepo-root>/plugins/docs-<library>/ \
 
 If validation fails, fix the identified gaps (re-run extract for missing pages, manually add missing sections) and re-validate.
 
-### Step 6: Register and Finalize
+### Step 6: Install and Finalize
 
-Add the new plugin to the root `marketplace.json`. Use the versioned plugin name when version is not `latest`:
+After building and validating, install the plugin at the chosen scope.
 
-```json
-{
-  "name": "<library>-<version>-docs",
-  "description": "<Library> (<version>) documentation reference",
-  "version": "1.0.0",
-  "author": { "name": "eneko-codes" },
-  "source": "./plugins/<library>-<version>-docs",
-  "category": "development",
-  "keywords": ["documentation", "<library>"]
-}
+**Project scope** (shared with team via git):
+```bash
+claude /plugin install <name>-docs --scope project
+```
+The plugin directory at `<project-root>/.claude/plugins/<name>-docs/` should be committed to git so teammates get it automatically.
+
+**User scope** (available across all your projects):
+```bash
+claude /plugin install <name>-docs --scope user
 ```
 
-For `latest` version, omit the version (e.g., `<library>-docs`).
+**Local scope** (just you, one project, not committed):
+```bash
+claude /plugin install <name>-docs --scope local
+```
+Add `.claude/plugins/<name>-docs/` to `.gitignore`.
 
 Report the final results to the user:
 - Total pages indexed
 - Plugin name (including version if applicable)
 - Plugin directory location
+- Scope and what that means for visibility
 - Any warnings or manual fixes applied
-- Suggest testing with: `claude /plugin install <library>-<version>-docs@knowledge`
 
 ## Script Reference
 
