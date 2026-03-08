@@ -240,18 +240,17 @@ Claude Code can access docs two ways: **MCP servers** fetch pages in real-time, 
 <tr>
 <td>
 
-- 200–2000ms per lookup
+- Network round-trip per lookup
 - Breaks when APIs change or rate-limit
-- ~60% token overhead from protocol
-- One page at a time
-- Blocked by Cloudflare / bot detection
+- Token overhead from tool schemas and protocol wrapping
+- Blocked by Cloudflare / bot detection on many doc sites
 
 </td>
 <td>
 
-- **<1ms** from local disk
-- **100% reliable** — no extra external deps
-- **Zero overhead** — direct file reads
+- **Sub-millisecond** local file reads
+- **No extra dependencies** at query time
+- **Lower token cost** — no protocol wrapping per call
 - **Full docs map** via SKILL.md index
 - **Hierarchical** — `api/`, `concepts/`, `examples/`
 
