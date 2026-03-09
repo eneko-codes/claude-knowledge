@@ -87,8 +87,16 @@ claude /plugin install doc-indexer@knowledge
 Then tell Claude:
 
 ```
+Index the sqlc docs
+```
+
+or with a specific URL:
+
+```
 Index the documentation at https://docs.sqlc.dev/en/stable/ for sqlc
 ```
+
+If you don't provide a URL, Claude searches for the official docs and confirms with you before crawling.
 
 ### What happens
 

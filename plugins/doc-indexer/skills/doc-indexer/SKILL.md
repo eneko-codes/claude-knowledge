@@ -28,12 +28,22 @@ Follow these steps in order. Do not skip steps. Run each script and verify its o
 
 ### Step 1: Gather Parameters
 
-Ask the user for:
+Collect the following. The user may provide all of them upfront, some, or none — fill in what's missing.
+
 - **Library name** — short identifier (e.g., `sqlc`, `goose`, `laravel`)
 - **Documentation root URL** — the starting page to crawl (e.g., `https://docs.sqlc.dev/en/stable/`)
 - **Path prefix restriction** — whether to restrict crawling to the URL path prefix (default: yes)
 - **Version label** — documentation version if applicable (default: `latest`)
 - **Scope** — where to install the plugin (default: `user`)
+
+**If the user doesn't provide a URL** (e.g., "index go docs", "index laravel docs"), use web search to find the official documentation site. Search for `<library> official documentation site` and pick the official docs URL. Confirm with the user before proceeding:
+
+```
+I found the official Go documentation at https://go.dev/doc/
+Is this the right URL? Should I restrict crawling to this path?
+```
+
+Do not guess or fabricate URLs. Always search and confirm.
 
 **Versioning:** When the user specifies a version other than `latest`, the generated plugin includes the version in its name. For example, `laravel` version `11` produces plugin `laravel-11-docs` with skill `laravel-11-docs`. This allows multiple versions to coexist — the user can have `laravel-11-docs` and `laravel-12-docs` installed simultaneously. Always ask about version when the documentation URL contains a version indicator (e.g., `/v2/`, `/11.x/`, `/en/stable/`).
 
