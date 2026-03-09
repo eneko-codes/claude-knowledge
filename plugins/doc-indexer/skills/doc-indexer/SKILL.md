@@ -58,7 +58,7 @@ Recommend **project** scope when the docs are relevant to the current project (e
 
 **Validate the target directory before proceeding:**
 
-- **Project scope:** Check that the current working directory is a git repository or has a `.claude/` directory. If neither exists, ask the user: _"The current directory doesn't appear to be a project root (no .git or .claude directory). Where should I save the skill? Please provide the project root path, or switch to user scope."_
+- **Project scope:** Check that the current working directory has a `.claude/` directory. If it doesn't, ask the user: _"The current directory doesn't have a .claude/ directory. Where should I save the skill? Please provide the project root path, or switch to user scope."_
 - **User scope:** Check that `~/.claude/` exists. If it doesn't, ask the user: _"~/.claude/ doesn't exist — this usually means Claude Code hasn't been configured yet. Should I create it, or do you want to specify a different path?"_
 
 ### Step 2: Crawl Documentation Pages
