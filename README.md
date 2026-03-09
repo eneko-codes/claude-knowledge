@@ -103,7 +103,7 @@ If you don't provide a URL, Claude searches for the official docs and confirms w
 Claude runs a 7-step pipeline:
 
 1. **Crawl** — visits every page on the docs site using a stealth Chromium browser
-2. **Extract** — converts each page to structured markdown with code blocks preserved, and takes a screenshot of each page for verification
+2. **Extract** — converts each page to structured markdown with code blocks preserved
 3. **Summarize** — shows you what was found, grouped by topic
 4. **You choose** — you pick which topics to include from a numbered list
 5. **Filter** — Claude reviews each page and removes noise (blog posts, archive listings, empty pages). You approve the final list before proceeding
@@ -221,13 +221,28 @@ crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  bui
 
 **`extract.py`** — Finds the main content area via 15 CSS selector heuristics, strips navigation/UI, converts to markdown. Classifies pages as `api-reference` · `conceptual` · `tutorial` · `example` · `warning`.
 
-**Claude review** — Reads extracted content, groups by topic, asks user which topics to keep (for large sites). Then filters out noise: blog posts, archive listings, empty pages, duplicates. User approves the final list.
+**Claude review** — Reads extracted content, groups by topic, asks user which topics to keep. Then filters out noise: blog posts, archive listings, empty pages, duplicates. User approves the final list.
 
 **`build_plugin.py`** — Groups filtered pages into `api/`, `concepts/`, `examples/`, `warnings/`. Generates SKILL.md index with quick reference for top API functions.
 
 **`validate.py`** — Structural checks: plugin.json fields, SKILL.md frontmatter, file paths resolve, no empty files.
 
 **`verify.py`** — Accuracy check: re-visits every source URL with Playwright, compares title, heading count, code block count, and content length against the generated markdown. Takes screenshots of mismatched pages for manual inspection.
+
+</details>
+
+<details>
+<summary><strong>Troubleshooting</strong></summary>
+
+<br>
+
+**Playwright fails to install Chromium** — Ensure internet access and ~200MB disk space. On Linux: `sudo npx playwright install-deps chromium`
+
+**Crawl gets blocked (403/429)** — Increase the delay: `python3 crawl.py <url> --delay 3.0`
+
+**Empty markdown extraction** — The content area heuristic may not match the site's HTML. Open an issue with the URL.
+
+**Windows: `source` not found** — Use PowerShell: `.\.venv\Scripts\Activate.ps1`. If blocked: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
 </details>
 
@@ -266,56 +281,6 @@ Both approaches pre-index documentation. The difference is **how Claude finds wh
 </table>
 
 > **Trade-off:** One-time crawl (5–30 min) to generate the plugin. Re-crawl when docs update — monthly is usually enough.
-
----
-
-## Troubleshooting
-
-<details>
-<summary><strong>Playwright fails to install Chromium</strong></summary>
-
-<br>
-
-Ensure internet access and ~200MB disk space. On Linux:
-
-```bash
-sudo npx playwright install-deps chromium
-```
-
-</details>
-
-<details>
-<summary><strong>Crawl gets blocked (403/429)</strong></summary>
-
-<br>
-
-Increase the delay:
-
-```bash
-python3 crawl.py <url> --delay 3.0
-```
-
-</details>
-
-<details>
-<summary><strong>Empty markdown extraction</strong></summary>
-
-<br>
-
-The content area heuristic may not match the site's HTML. Open an issue with the URL.
-
-</details>
-
-<details>
-<summary><strong>Windows: <code>source</code> not found</strong></summary>
-
-<br>
-
-Use PowerShell: `.\.venv\Scripts\Activate.ps1`
-
-If blocked: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
-
-</details>
 
 ---
 
