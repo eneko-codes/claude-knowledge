@@ -103,12 +103,12 @@ If you don't provide a URL, Claude searches for the official docs and confirms w
 Claude runs a 7-step pipeline:
 
 1. **Crawl** — visits every page on the docs site using a stealth Chromium browser
-2. **Extract** — converts each page to structured markdown with code blocks preserved
+2. **Extract** — converts each page to structured markdown with code blocks preserved, and takes a screenshot of each page for verification
 3. **Summarize** — shows you what was found, grouped by topic
 4. **You choose** — you pick which topics to include from a numbered list
 5. **Filter** — Claude reviews each page and removes noise (blog posts, archive listings, empty pages). You approve the final list before proceeding
 6. **Build** — assembles the filtered content into a hierarchical plugin with an index
-7. **Validate** — checks that nothing was lost (page count, section coverage, link resolution)
+7. **Validate** — checks structural integrity and spot-checks extracted markdown against page screenshots for accuracy
 
 Example interaction for a large library:
 

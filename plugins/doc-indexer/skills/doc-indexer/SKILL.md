@@ -220,16 +220,23 @@ Without `--sitemap`, the validator checks:
 
 If validation fails, fix the identified gaps and re-validate.
 
-### Step 6b: Spot-Check Accuracy
+### Step 6b: Spot-Check Accuracy Against Screenshots
 
-After validation passes, spot-check 3-5 generated files for accuracy:
+The extractor saves a viewport screenshot (`.png`) alongside each extracted JSON file. These screenshots show exactly what the page looks like in a browser — they are the ground truth.
+
+After validation passes, spot-check 3-5 generated files:
 
 1. Pick 3-5 files from different categories (one from `api/`, one from `concepts/`, etc.)
-2. Read each file's markdown content
-3. Compare against the extracted JSON: do headings match? Is the code block count the same? Is the content roughly the same length?
-4. If any file looks garbled, truncated, or contains navigation noise — flag it to the user
+2. Read the generated markdown file from the plugin output
+3. View the corresponding screenshot from `/tmp/<library>-extracted/` (same filename stem, `.png` extension) using the Read tool
+4. Compare them:
+   - Does the markdown title match the title visible in the screenshot?
+   - Are the main headings present in both?
+   - If a code block is visible in the screenshot, does it appear in the markdown?
+   - Does the markdown contain navigation/sidebar text that shouldn't be there?
+5. If any file doesn't match its screenshot — flag it to the user: *"The extracted markdown for [page] doesn't match the screenshot. [describe the difference]. Keep, skip, or re-extract?"*
 
-This is a sanity check, not a full audit. The goal is to catch obvious extraction failures before the user starts relying on the plugin.
+This is a sanity check, not a full audit. The goal is to catch obvious extraction failures before the user starts relying on the plugin. Screenshots are discarded after verification — they don't ship in the plugin.
 
 ### Step 7: Install and Finalize
 
