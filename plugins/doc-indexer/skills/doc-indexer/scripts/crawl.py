@@ -62,6 +62,7 @@ def parse_args():
     p.add_argument("--max-depth", type=int, default=10, help="Maximum crawl depth (default: 10)")
     p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     p.add_argument("--same-path-prefix", action="store_true", help="Only follow links sharing the root URL path prefix")
+    p.add_argument("--max-pages", type=int, default=0, help="Stop after fetching this many pages (0 = unlimited)")
     return p.parse_args()
 
 
@@ -337,7 +338,7 @@ def crawl(args):
             viewport={"width": 1280, "height": 800},
             # Realistic Chrome user-agent string. playwright-stealth patches most
             # fingerprint vectors, but the UA string is the first thing WAFs check.
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
         page = context.new_page()
 
@@ -358,6 +359,11 @@ def crawl(args):
             if depth > args.max_depth:
                 log.warning(f"Max depth reached, skipping: {url}")
                 continue
+
+            # Page count guard: stop crawling after reaching the limit.
+            if args.max_pages > 0 and len(pages) >= args.max_pages:
+                log.info(f"Reached --max-pages limit ({args.max_pages}), stopping crawl")
+                break
 
             log.info(f"[{len(pages)+1}/{len(visited)}] depth={depth} {url}")
 

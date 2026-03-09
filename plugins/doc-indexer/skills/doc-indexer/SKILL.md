@@ -9,7 +9,7 @@ description: >
 
 # Doc Indexer
 
-Generate a complete hierarchical documentation plugin by crawling an external documentation site.
+Generate a complete documentation plugin by crawling an external documentation site.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ cd {PLUGIN_ROOT}/scripts
 bash setup.sh
 ```
 
-This installs Playwright, playwright-stealth, BeautifulSoup4, html2text, and downloads Chromium (~200MB one-time download). All subsequent commands assume the venv is activated.
+This installs Playwright, playwright-stealth, BeautifulSoup4, markdownify, Pygments, and downloads Chromium (~200MB one-time download). All subsequent commands assume the venv is activated.
 
 ## Workflow
 
@@ -86,10 +86,12 @@ python3 extract.py /tmp/<library>-sitemap.json \
   --output /tmp/<library>-extracted/
 ```
 
+Add `--guess-languages` if the site has many unannotated code blocks — this uses Pygments to guess languages for bare ``` blocks. Only use when needed, as it may misclassify some blocks.
+
 **Verify output:**
 
 - Check `/tmp/<library>-extracted/` contains one JSON file per crawled page
-- Report extraction summary to the user: file count, category breakdown
+- Report extraction summary to the user: file count
 
 ### Step 4: Review and Filter Content
 
@@ -153,7 +155,7 @@ Check each page's extracted JSON for these issues:
 
 - `"used_fallback_selector": true` — the extractor couldn't find the content area and fell back to `<body>`. The markdown likely contains navigation/sidebar noise. Tell the user: _"This page may not have extracted cleanly — it used a fallback selector. Keep, skip, or re-extract?"_
 - Markdown looks garbled (broken tables, truncated code blocks, navigation text mixed with content) — tell the user: _"This page's markdown looks malformed. Here's an excerpt: [first 200 chars]. Keep, skip, or flag for manual review?"_
-- If a page's category seems wrong (e.g., a tutorial classified as "warning"), change the `category` field in the extracted JSON before building.
+- The `category` field in the extracted JSON is metadata only — it does not affect directory placement. All files go into a flat `pages/` directory.
 
 **4d. Present the filter results to the user.**
 
@@ -199,8 +201,9 @@ Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or
 
 **Verify output:**
 
-- Check the generated directory structure has: `.claude-plugin/plugin.json`, `skills/<name>-docs/SKILL.md`, subdirectories for content
-- Open the generated `SKILL.md` — confirm it lists every sub-file
+- Check the generated directory structure has: `.claude-plugin/plugin.json`, `skills/<name>-docs/SKILL.md`, `skills/<name>-docs/pages/` with content files
+- Open the generated `SKILL.md` — confirm it lists every sub-file with H2 sub-topic descriptions
+- If re-running after a partial extraction, extract.py automatically skips already-extracted pages (use `--force` to re-extract all)
 - Spot-check a few sub-files for content completeness
 
 ### Step 6: Validate Structure
@@ -217,7 +220,6 @@ Without `--sitemap`, the validator checks:
 
 - plugin.json exists with required fields
 - SKILL.md has frontmatter and substantial content
-- SITEMAP.md exists
 - All file paths in SKILL.md resolve to existing files
 - No empty content files
 
@@ -239,9 +241,9 @@ python3 verify.py <output-dir> --screenshot-dir /tmp/<library>-screenshots
 This re-visits the original URL of every content file and compares key signals:
 
 - **Title match** — does the markdown title match the live page's H1?
-- **Heading count** — does the markdown have at least 50% of the live page's headings?
-- **Code block count** — does the markdown have at least 50% of the live page's code blocks?
-- **Content length** — is the markdown at least 30% the length of the live page content?
+- **Heading count** — does the markdown have at least 40% of the live page's headings?
+- **Code block count** — does the markdown have at least 70% of the live page's code blocks?
+- **Content length** — is the markdown at least 40% the length of the live page content?
 
 When `--screenshot-dir` is provided, mismatched pages get a screenshot saved automatically. Use the Read tool to view screenshots of mismatched pages — this shows what the page actually looks like versus what was extracted.
 
@@ -253,7 +255,7 @@ When `--screenshot-dir` is provided, mismatched pages get a screenshot saved aut
 For each mismatch, present it to the user:
 
 ```
-Mismatch in api/configuration.md:
+Mismatch in pages/configuration.md:
 - Code blocks: markdown has 1 but live page has 3 (33% captured)
 - Screenshot saved at /tmp/sqlc-screenshots/api_configuration.md.png
 
@@ -307,8 +309,8 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 
 | Script            | Purpose                                      | Key Arguments                                                                |
 | ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
-| `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--delay` `--same-path-prefix`         |
-| `extract.py`      | Fetch and convert page content to markdown   | `<sitemap.json>` `--output` `--delay`                                        |
+| `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
+| `extract.py`      | Fetch and convert page content to markdown   | `<sitemap.json>` `--output` `--delay` `--force` `--guess-languages`          |
 | `build_plugin.py` | Assemble plugin from extracted content       | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
 | `validate.py`     | Verify plugin structural integrity           | `<plugin-dir>`                                                               |
 | `verify.py`       | Compare generated content against live pages | `<plugin-dir>` `--delay` `--screenshot-dir`                                  |

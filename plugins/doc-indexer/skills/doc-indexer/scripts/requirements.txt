@@ -1,5 +1,6 @@
 playwright>=1.40
 playwright-stealth>=1.0
 beautifulsoup4>=4.12
-html2text>=2024.2
+markdownify>=0.14
+pygments>=2.17
 lxml>=4.9

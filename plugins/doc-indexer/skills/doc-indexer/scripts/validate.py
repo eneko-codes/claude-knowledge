@@ -7,12 +7,11 @@ structurally sound, and faithfully represents the original documentation.
 Checks performed:
   1. plugin.json exists and has required fields (name, description, version, author)
   2. SKILL.md exists, has YAML frontmatter, and has substantial content
-  3. SITEMAP.md exists
-  4. Page count: content files >= sitemap pages (accounting for warning consolidation)
-  5. Section coverage: >= 90% of sitemap headings appear in content files
-  6. Link resolution: all file paths in SKILL.md resolve to existing files
-  7. No empty files: every .md file has real content (not just a heading)
-  8. Signature coverage: function-like headings from sitemap appear in content (>= 80%)
+  3. Page count: content files >= sitemap pages (when sitemap.json provided)
+  4. Section coverage: >= 90% of sitemap headings appear in content files
+  5. Link resolution: all file paths in SKILL.md resolve to existing files
+  6. No empty files: every .md file has real content (not just a heading)
+  7. Signature coverage: function-like headings from sitemap appear in content (>= 80%)
 
 Exit codes:
   0 — all checks passed
@@ -206,66 +205,26 @@ def check_skill_md(skill_dir, result):
     return content
 
 
-def check_page_count(sitemap, md_files, skill_dir, result):
-    """Verify that the number of content files matches the sitemap page count.
-
-    Warning pages may be consolidated into a warnings/ directory, so we count
-    actual warning files and use that as expected slack. The check passes if
-    content_count + warning_slack >= sitemap_pages.
-    """
-    # First check that SITEMAP.md exists
-    sitemap_md = skill_dir / "index" / "SITEMAP.md"
-    if not sitemap_md.exists():
-        result.add_check("SITEMAP.md exists", False)
-        return
-
-    result.add_check("SITEMAP.md exists", True)
-
+def check_page_count(sitemap, md_files, result):
+    """Verify that the number of content files matches the sitemap page count."""
     if sitemap is None:
         result.add_warning("No sitemap.json provided — skipping count cross-reference")
         return
 
     sitemap_pages = len(sitemap.get("pages", []))
+    content_count = len(md_files)
 
-    # Content files = all .md files except those in index/ (SITEMAP.md)
-    content_files = {k: v for k, v in md_files.items() if not k.startswith("index/")}
-    content_count = len(content_files)
-
-    # Count actual warning files in the warnings/ directory as expected slack.
-    # Warning pages from the sitemap may be consolidated into fewer files in
-    # warnings/, so the difference is legitimate and expected.
-    warnings_dir = skill_dir / "warnings"
-    warning_file_count = 0
-    if warnings_dir.exists() and warnings_dir.is_dir():
-        warning_file_count = len(list(warnings_dir.glob("*.md")))
-
-    # Also count warning entries from the SITEMAP.md WARNINGS section
-    sitemap_md_content = sitemap_md.read_text(encoding="utf-8")
-    warning_section_count = 0
-    in_warnings_section = False
-    for line in sitemap_md_content.split("\n"):
-        if re.match(r"^#{1,3}\s+.*[Ww]arning", line):
-            in_warnings_section = True
-            continue
-        if in_warnings_section and re.match(r"^#{1,3}\s+", line):
-            break  # Hit the next section
-        if in_warnings_section and line.strip().startswith("- "):
-            warning_section_count += 1
-
-    # Use the larger of the two warning counts as slack
-    warning_slack = max(warning_file_count, warning_section_count)
-
-    if content_count + warning_slack >= sitemap_pages:
+    if content_count >= sitemap_pages:
         result.add_check(
             "Page count matches",
             True,
-            f"{content_count} content files for {sitemap_pages} sitemap pages (warning slack: {warning_slack})",
+            f"{content_count} content files for {sitemap_pages} sitemap pages",
         )
     else:
         result.add_check(
             "Page count matches",
             False,
-            f"{content_count} content files but {sitemap_pages} sitemap pages (warning slack: {warning_slack}, diff: {sitemap_pages - content_count - warning_slack})",
+            f"{content_count} content files but {sitemap_pages} sitemap pages (diff: {sitemap_pages - content_count})",
         )
 
 
@@ -357,7 +316,7 @@ def check_link_resolution(skill_md_content, skill_dir, result):
 
     # Match backtick-quoted paths that look like file references (contain .md)
     # Pattern: starts with a letter, contains word chars/slashes/dashes, ends in .md
-    path_pattern = re.compile(r"`([a-zA-Z][\w/-]*\.md)`")
+    path_pattern = re.compile(r"`([a-zA-Z_][\w/-]*\.md)`")
     referenced = path_pattern.findall(skill_md_content)
 
     if not referenced:
@@ -493,7 +452,7 @@ def main():
     # Step 3: Run all validation checks
     check_plugin_json(plugin_dir, result)          # Metadata integrity
     skill_md_content = check_skill_md(skill_dir, result)  # SKILL.md structure
-    check_page_count(sitemap, md_files, skill_dir, result)      # Completeness
+    check_page_count(sitemap, md_files, result)                  # Completeness
     check_section_coverage(sitemap, md_files, skill_dir, result) # Content fidelity
     check_link_resolution(skill_md_content, skill_dir, result)   # Internal links
     check_empty_files(md_files, result)                          # No stub files

@@ -8,11 +8,7 @@ Claude Code documentation plugin with the standard directory structure:
     ├── .claude-plugin/plugin.json        # Plugin metadata
     └── skills/<library>-docs/
         ├── SKILL.md                      # Index file Claude reads first
-        ├── index/SITEMAP.md              # Full page listing
-        ├── api/                          # API reference pages
-        ├── concepts/                     # Conceptual + tutorial pages
-        ├── examples/                     # Code-heavy example pages
-        └── troubleshooting/               # Deprecation notices, individual files
+        └── pages/                        # All documentation pages (flat)
 
 The generated SKILL.md is the entry point for Claude — it lists every sub-file
 so Claude can navigate to the relevant section based on the user's question.
@@ -27,7 +23,6 @@ import logging
 import os
 import re
 import sys
-from collections import Counter, defaultdict
 from pathlib import Path
 
 logging.basicConfig(
@@ -42,16 +37,11 @@ log = logging.getLogger("build_plugin")
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = SCRIPT_DIR.parent / "templates"
 
-# Maps extract.py's page categories to output directory names.
-# 6-category system designed to cover different documentation ecosystems:
-# frameworks (Laravel), APIs (Stripe), UI libraries (React), infrastructure (K8s).
-CATEGORY_DIRS = {
-    "api-reference": "reference",       # Function signatures, type definitions, config params
-    "conceptual": "concepts",           # Architecture, design, how-things-work explanations
-    "tutorial": "guides",               # Step-by-step procedures, tutorials, how-to
-    "example": "examples",              # Code samples, recipes, cookbooks
-    "warning": "troubleshooting",       # Deprecation notices, breaking changes, error guides
-}
+# All content files go into a single "pages/" directory.
+# Category classification from extract.py is kept as metadata for the SKILL.md
+# descriptions, but no longer drives directory structure. This avoids the 50%+
+# misclassification rate from heuristic-based categorization.
+PAGES_DIR = "pages"
 
 
 def parse_args():
@@ -107,35 +97,6 @@ def sanitize_filename(text):
     return safe or "untitled"
 
 
-def group_by_category(pages):
-    """Group extracted pages by their documentation category.
-
-    Returns a dict like {"api-reference": [page1, page2], "conceptual": [page3], ...}.
-    Pages without a category default to "conceptual".
-    """
-    groups = defaultdict(list)
-    for page in pages:
-        category = page.get("category", "conceptual")
-        groups[category].append(page)
-    return dict(groups)
-
-
-def find_top_signatures(pages, top_n=10):
-    """Find the N most frequently appearing function signatures across all pages.
-
-    These are surfaced in the generated SKILL.md as a "Quick Reference" section
-    so Claude can immediately answer questions about common API functions without
-    reading through all sub-files.
-
-    We count occurrences across pages (not within a single page) because a
-    signature that appears on multiple pages is likely a core API function.
-    """
-    sig_counts = Counter()
-    for page in pages:
-        for sig in page.get("signatures", []):
-            sig_counts[sig] += 1
-    return [sig for sig, _ in sig_counts.most_common(top_n)]
-
 
 # ---------------------------------------------------------------------------
 # Template handling
@@ -169,169 +130,14 @@ def render_template(template, **kwargs):
     return result
 
 
-# ---------------------------------------------------------------------------
-# Code language detection
-# ---------------------------------------------------------------------------
-
-def detect_language(code_content):
-    """Detect the programming language of a code block by analyzing its content.
-
-    Uses simple heuristic pattern matching — checks for language-specific keywords,
-    syntax patterns, and common CLI prefixes. Returns the language string suitable
-    for markdown fenced code block annotations (e.g., "php", "bash", "json").
-
-    Returns empty string if the language cannot be determined with reasonable
-    confidence. It's better to leave a code block unannotated than to guess wrong.
-    """
-    content = code_content.strip()
-    if not content:
-        return ""
-
-    # --- XML (check before HTML since XML declaration is unambiguous) ---
-    if content.startswith("<?xml"):
-        return "xml"
-
-    # --- PHP ---
-    php_markers = ["<?php", "namespace ", "use \\", "->", "$this", "Route::", "Artisan::"]
-    if any(marker in content for marker in php_markers):
-        # "function " alone is ambiguous (could be JS), but with PHP markers it's PHP
-        if "function " in content or any(m in content for m in ["<?php", "$this", "->", "Route::", "Artisan::"]):
-            return "php"
-
-    # --- Blade (Laravel templates — check before HTML since blade contains HTML) ---
-    blade_markers = ["@csrf", "@if", "@foreach", "@extends", "@section", "@yield", "@component"]
-    if any(marker in content for marker in blade_markers):
-        return "blade"
-    # {{ }} syntax without other template engines
-    if "{{ " in content and "@" in content:
-        return "blade"
-
-    # --- HTML ---
-    html_markers = ["<!DOCTYPE", "<html", "<head", "<body", "<form", "<div", "<meta", "<script", "<link rel"]
-    if any(marker in content for marker in html_markers):
-        return "html"
-
-    # --- Bash / shell commands ---
-    first_line = content.split("\n")[0].strip()
-    bash_prefixes = ["php artisan", "composer ", "npm ", "npx ", "curl ", "./", "cd ",
-                     "mkdir ", "cp ", "mv ", "rm ", "chmod ", "chown ", "sudo ",
-                     "git ", "docker ", "pip ", "python ", "ruby ", "go ",
-                     "export ", "source ", "echo ", "cat ", "ls ", "grep "]
-    if any(first_line.startswith(prefix) for prefix in bash_prefixes):
-        return "bash"
-    if first_line.startswith("#!") or first_line.startswith("$ "):
-        return "bash"
-
-    # --- JSON ---
-    if (content.startswith("{") or content.startswith("[")) and '": ' in content:
-        return "json"
-
-    # --- SQL ---
-    sql_markers = ["CREATE TABLE", "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "ALTER TABLE",
-                   "DROP TABLE", "CREATE INDEX"]
-    content_upper = content.upper()
-    if any(marker in content_upper for marker in sql_markers):
-        return "sql"
-
-    # --- CSS ---
-    css_markers = ["@media", "@tailwind", "@import", "@keyframes"]
-    if any(marker in content for marker in css_markers):
-        return "css"
-    # Class/ID selectors with braces: .class { or #id {
-    if re.search(r'[.#]\w[\w-]*\s*\{', content):
-        return "css"
-
-    # --- YAML ---
-    # Indented key: value patterns across multiple lines, no braces
-    yaml_lines = [l for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
-    if yaml_lines and all(re.match(r'^[\s-]*[\w._-]+\s*:', l) or l.strip().startswith("-") for l in yaml_lines[:5]):
-        return "yaml"
-
-    # --- env (dotenv files) ---
-    env_lines = [l for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
-    if env_lines and all(re.match(r'^[A-Z][A-Z0-9_]*=', l.strip()) for l in env_lines[:5]):
-        return "env"
-
-    # --- INI ---
-    if re.match(r'^\[[\w. -]+\]\s*$', first_line):
-        return "ini"
-
-    # --- JavaScript (check after PHP to avoid false positives from shared "function" keyword) ---
-    js_markers = ["document.", "window.", "$.", "const ", "let ", "import ", "export ",
-                  "require(", "module.exports", "addEventListener", "console.log"]
-    if any(marker in content for marker in js_markers):
-        # Make sure it's not PHP masquerading as JS
-        if not any(m in content for m in ["<?php", "$this", "->", "::"]):
-            return "js"
-
-    return ""
-
-
-# ---------------------------------------------------------------------------
-# Content generation
-# ---------------------------------------------------------------------------
-
-def annotate_code_blocks(markdown_text, code_blocks):
-    """Annotate unlabeled fenced code blocks in markdown with detected languages.
-
-    Finds fenced code blocks (``` ... ```) that have no language annotation and
-    attempts to detect the language from the code content. If a language is
-    detected, the opening fence is updated to include it (e.g., ```php).
-
-    Uses the extracted code_blocks list (which has language info from CSS classes)
-    as a first pass — only falls back to heuristic detection for blocks where
-    the extractor couldn't determine the language.
-    """
-    # Build a lookup of code block contents to their known languages
-    known_languages = {}
-    for cb in code_blocks:
-        if cb.get("language"):
-            # Use first 80 chars of content as key (enough to identify uniquely)
-            key = cb["content"].strip()[:80]
-            known_languages[key] = cb["language"]
-
-    def replace_fence(match):
-        lang = match.group(1) or ""
-        code = match.group(2)
-        if lang:
-            # Already has a language annotation — leave it alone
-            return match.group(0)
-
-        # Try to find a known language from the extracted code blocks
-        code_stripped = code.strip()[:80]
-        detected = known_languages.get(code_stripped, "")
-
-        # Fall back to heuristic detection
-        if not detected:
-            detected = detect_language(code)
-
-        if detected:
-            return f"```{detected}\n{code}```"
-        return match.group(0)
-
-    # Match fenced code blocks: ```lang\n...``` (lang may be empty)
-    pattern = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
-    return pattern.sub(replace_fence, markdown_text)
-
-
-def generate_section_file(page, library_name):
-    """Generate a markdown sub-file for a single documentation page.
-
-    Each sub-file contains:
-    - The page title as an H1 heading
-    - A "Source:" link to the original URL (for reference/verification)
-    - The full extracted markdown content with annotated code blocks
-    - Any deprecation warnings highlighted at the bottom
-    """
-    template = load_template("section_template.md")
+def generate_section_file(page, library_name, template=None):
+    """Generate a markdown sub-file for a single documentation page."""
+    if template is None:
+        template = load_template("section_template.md")
     title = page.get("title", "Untitled")
     url = page.get("url", "")
     markdown = page.get("markdown", "")
-    code_blocks = page.get("code_blocks", [])
     warnings = page.get("warnings", [])
-
-    # Annotate unlabeled code blocks with detected languages
-    markdown = annotate_code_blocks(markdown, code_blocks)
 
     # Format warnings as a blockquote section if any exist
     warnings_block = ""
@@ -348,32 +154,6 @@ def generate_section_file(page, library_name):
 
 
 
-def generate_sitemap(pages, library_name):
-    """Generate index/SITEMAP.md — a complete listing of all documentation pages.
-
-    Groups pages by category with relative links to their content files.
-    This serves as the "table of contents" for the entire documentation plugin.
-    Claude reads this to understand what content is available before diving
-    into specific sub-files.
-    """
-    lines = [f"# {library_name} Documentation Sitemap\n"]
-    lines.append(f"Total pages: {len(pages)}\n")
-
-    # Group by category for organized presentation
-    groups = group_by_category(pages)
-    for category in sorted(groups.keys()):
-        cat_pages = groups[category]
-        output_dir = CATEGORY_DIRS.get(category, "concepts")
-        lines.append(f"\n## {category.replace('-', ' ').title()} ({len(cat_pages)} pages)\n")
-        for page in cat_pages:
-            title = page.get("title", "Untitled")
-            filename = sanitize_filename(title) + ".md"
-            # Relative path from index/ to the content directory
-            filepath = f"../{output_dir}/{filename}"
-            lines.append(f"- [{title}]({filepath})")
-
-    return "\n".join(lines)
-
 
 def generate_skill_md(library_name, versioned_library, plugin_name, pages, source_url, version, file_listing):
     """Generate the SKILL.md index file for the documentation plugin.
@@ -388,21 +168,11 @@ def generate_skill_md(library_name, versioned_library, plugin_name, pages, sourc
     """
     template = load_template("SKILL_template.md")
 
-    # Surface the top 5-10 most common function signatures as a quick reference.
-    # This lets Claude answer "what's the signature for X?" without reading sub-files.
-    top_sigs = find_top_signatures(pages)
+    # No quick reference section — it was noise with out-of-context signatures
     quick_ref = ""
-    if top_sigs:
-        quick_ref = "\n## Quick Reference — Common Functions\n\n"
-        quick_ref += "```\n" + "\n".join(top_sigs) + "\n```\n"
 
-    # Build a summary of how many pages are in each content directory
-    groups = group_by_category(pages)
-    category_summary = ""
-    for category in sorted(groups.keys()):
-        output_dir = CATEGORY_DIRS.get(category, "concepts")
-        count = len(groups[category])
-        category_summary += f"- **{output_dir}/**: {count} {category.replace('-', ' ')} pages\n"
+    # Simple page count summary
+    category_summary = f"- **{PAGES_DIR}/**: {len(pages)} documentation pages\n"
 
     # Build version-specific trigger phrases for the SKILL.md description.
     # When versioned, include phrases like "laravel 11 docs" so Claude picks
@@ -459,12 +229,10 @@ def build_plugin(args):
 
     Pipeline:
     1. Load all extracted JSON files
-    2. Group pages by category
-    3. Create plugin directory structure
-    4. Generate content sub-files (one .md per page, including individual warning files)
-    5. Generate index/SITEMAP.md (full page listing)
-    6. Generate SKILL.md (entry point with file index and quick reference)
-    7. Generate plugin.json (metadata)
+    2. Create plugin directory structure
+    3. Generate content sub-files (one .md per page in pages/)
+    4. Generate SKILL.md (entry point with file index and sub-topic descriptions)
+    5. Generate plugin.json (metadata)
     """
     library = args.library_name
     extracted_dir = args.extracted_dir
@@ -502,10 +270,7 @@ def build_plugin(args):
 
     log.info(f"Loaded {len(pages)} pages")
 
-    # Group by category and log distribution
-    groups = group_by_category(pages)
-    for cat, cat_pages in sorted(groups.items()):
-        log.info(f"  {cat}: {len(cat_pages)} pages")
+    log.info(f"  Total: {len(pages)} pages (flat structure)")
 
     # Set up the plugin directory structure following Claude Code plugin conventions:
     # .claude-plugin/plugin.json (required metadata)
@@ -515,63 +280,56 @@ def build_plugin(args):
     skill_name = f"{versioned_library}-docs"
     skill_dir = output_dir / "skills" / skill_name
     plugin_meta_dir = output_dir / ".claude-plugin"
-    index_dir = skill_dir / "index"
 
-    for d in [plugin_meta_dir, index_dir]:
+    for d in [plugin_meta_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     # Track all generated files for the SKILL.md file listing
     file_listing_lines = []
     written_files = []
 
-    # Generate content sub-files, organized by category into subdirectories
-    for category, cat_pages in sorted(groups.items()):
-        output_subdir = CATEGORY_DIRS.get(category, "concepts")
-        content_dir = skill_dir / output_subdir
-        content_dir.mkdir(parents=True, exist_ok=True)
+    # Generate content sub-files — all files go into a single pages/ directory.
+    # No category-based subdirectories; SKILL.md provides topic navigation.
+    content_dir = skill_dir / PAGES_DIR
+    content_dir.mkdir(parents=True, exist_ok=True)
 
-        # Every category gets one markdown file per extracted page — including
-        # warnings. Previously warnings were consolidated into a single WARNINGS.md
-        # but this produced unreadably large files (386KB+) and broke SITEMAP links.
-        # Track filenames within this directory to detect collisions.
-        # Case-insensitive comparison because macOS/Windows filesystems are
-        # case-insensitive — "Config.md" and "config.md" would overwrite.
-        used_filenames = {}
+    used_filenames = {}
 
-        for page in cat_pages:
-            title = page.get("title", "Untitled")
-            filename = sanitize_filename(title) + ".md"
+    section_template = load_template("section_template.md")
 
-            # Detect filename collisions — if two pages produce the same
-            # filename (e.g., "Installation" from two different URLs),
-            # append a numeric suffix to disambiguate.
-            if filename.lower() in used_filenames:
-                base = sanitize_filename(title)
-                counter = 2
-                while f"{base}-{counter}.md".lower() in used_filenames:
-                    counter += 1
-                filename = f"{base}-{counter}.md"
-                log.warning(f"  Filename collision: '{title}' → {filename}")
+    for page in pages:
+        title = page.get("title", "Untitled")
+        filename = sanitize_filename(title) + ".md"
 
-            used_filenames[filename.lower()] = True
+        # Detect filename collisions
+        if filename.lower() in used_filenames:
+            base = sanitize_filename(title)
+            counter = 2
+            while f"{base}-{counter}.md".lower() in used_filenames:
+                counter += 1
+            filename = f"{base}-{counter}.md"
+            log.warning(f"  Filename collision: '{title}' → {filename}")
 
-            filepath = content_dir / filename
-            content = generate_section_file(page, library)
-            filepath.write_text(content, encoding="utf-8")
+        used_filenames[filename.lower()] = True
 
-            rel_path = f"{output_subdir}/{filename}"
-            file_listing_lines.append(f"- `{rel_path}` — {title}")
-            written_files.append(rel_path)
+        filepath = content_dir / filename
+        content = generate_section_file(page, library, section_template)
+        filepath.write_text(content, encoding="utf-8")
+
+        # Build rich file listing with H2 headings as sub-topics
+        h2_headings = [h["text"] for h in page.get("headings", []) if h.get("level") == 2]
+        if h2_headings:
+            # Show up to 8 key sub-topics
+            topics = ", ".join(h2_headings[:8])
+            if len(h2_headings) > 8:
+                topics += f", ... (+{len(h2_headings) - 8} more)"
+            file_listing_lines.append(f"- `{PAGES_DIR}/{filename}` — {title}: {topics}")
+        else:
+            file_listing_lines.append(f"- `{PAGES_DIR}/{filename}` — {title}")
+
+        written_files.append(f"{PAGES_DIR}/{filename}")
 
     log.info(f"Wrote {len(written_files)} content files")
-
-    # Generate the SITEMAP.md index (complete page listing grouped by category)
-    sitemap_content = generate_sitemap(pages, library)
-    sitemap_path = index_dir / "SITEMAP.md"
-    sitemap_path.write_text(sitemap_content, encoding="utf-8")
-    # Insert SITEMAP at the top of the file listing
-    file_listing_lines.insert(0, f"- `index/SITEMAP.md` — Full sitemap of all {len(pages)} pages")
-    log.info(f"Wrote {sitemap_path}")
 
     # Generate SKILL.md — the entry point Claude reads when the skill activates.
     # The file listing is sorted alphabetically for consistent, scannable output.
@@ -590,7 +348,7 @@ def build_plugin(args):
     # Final summary
     log.info("=" * 60)
     log.info(f"Plugin built successfully: {output_dir}")
-    log.info(f"Total files: {len(written_files) + 3} (content + SITEMAP + SKILL + plugin.json)")
+    log.info(f"Total files: {len(written_files) + 2} (content + SKILL + plugin.json)")
     log.info(f"Skill name: {skill_name}")
 
 

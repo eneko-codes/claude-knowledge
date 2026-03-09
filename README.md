@@ -4,7 +4,7 @@
 
 **Pre-built documentation plugins for Claude Code.**
 
-Each plugin is a hierarchical skill with an index — Claude sees every available page
+Each plugin is a skill with an index — Claude sees every available page
 and navigates directly to the right file. No searching, no guessing.
 
 No extra API calls. No latency. No setup.
@@ -107,7 +107,7 @@ Claude runs a 7-step pipeline:
 3. **Summarize** — shows you what was found, grouped by topic
 4. **You choose** — you pick which topics to include from a numbered list
 5. **Filter** — Claude reviews each page and removes noise (blog posts, archive listings, empty pages). You approve the final list before proceeding
-6. **Build** — assembles the filtered content into a hierarchical plugin with an index
+6. **Build** — assembles the filtered content into a plugin with a flat `pages/` directory and a rich SKILL.md index listing sub-topics per file
 7. **Validate** — checks structural integrity, then re-visits every source page and compares against the generated markdown (title, headings, code blocks, content length). Mismatches are flagged with screenshots.
 
 Example interaction for a large library:
@@ -219,15 +219,72 @@ crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  bui
 
 **`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL. Outputs `sitemap.json` with titles, headings, and status for every page.
 
-**`extract.py`** — Finds the main content area via 15 CSS selector heuristics, strips navigation/UI, converts to markdown. Classifies pages as `api-reference` · `conceptual` · `tutorial` · `example` · `warning`.
+**`extract.py`** — Finds the main content area via 15 CSS selector heuristics, strips navigation/UI/tab labels/TOC noise, converts to markdown. Resumable — skips already-extracted pages on re-run.
 
 **Claude review** — Reads extracted content, groups by topic, asks user which topics to keep. Then filters out noise: blog posts, archive listings, empty pages, duplicates. User approves the final list.
 
-**`build_plugin.py`** — Groups filtered pages into `api/`, `concepts/`, `examples/`, `warnings/`. Generates SKILL.md index with quick reference for top API functions.
+**`build_plugin.py`** — Writes all pages into a flat `pages/` directory. Generates SKILL.md index with H2 sub-topic descriptions per file.
 
 **`validate.py`** — Structural checks: plugin.json fields, SKILL.md frontmatter, file paths resolve, no empty files.
 
-**`verify.py`** — Accuracy check: re-visits every source URL with Playwright, compares title, heading count, code block count, and content length against the generated markdown. Takes screenshots of mismatched pages for manual inspection.
+**`verify.py`** — Accuracy check: re-visits every source URL with Playwright, compares title, heading count, code block count, and content length against the generated markdown. Full-page screenshots of mismatched pages.
+
+</details>
+
+<details>
+<summary><strong>CLI Reference</strong></summary>
+
+<br>
+
+**crawl.py** — Discover documentation pages via BFS crawl
+
+```
+python3 crawl.py <root-url> [options]
+
+  --output FILE            Output sitemap path (default: sitemap.json)
+  --max-depth N            Max link-follow depth from root (default: 10)
+  --max-pages N            Stop after N pages, 0 = unlimited (default: 0)
+  --delay SECS             Base delay between requests (default: 0.5)
+  --same-path-prefix       Only follow links under the root URL's path
+```
+
+**extract.py** — Fetch pages and convert to structured markdown
+
+```
+python3 extract.py <sitemap.json> [options]
+
+  --output DIR             Output directory for JSON files (default: extracted/)
+  --delay SECS             Base delay between requests (default: 0.5)
+  --force                  Re-extract even if output file already exists
+  --guess-languages        Use Pygments to guess language for unannotated code blocks
+```
+
+**build_plugin.py** — Assemble extracted content into a Claude Code plugin
+
+```
+python3 build_plugin.py <library-name> <extracted-dir> [options]
+
+  --version LABEL          Documentation version label (default: latest)
+  --source-url URL         Original documentation URL
+  --output-dir DIR         Plugin output directory
+```
+
+**validate.py** — Check plugin structural integrity
+
+```
+python3 validate.py <plugin-dir> [options]
+
+  --sitemap FILE           Cross-reference against original sitemap.json
+```
+
+**verify.py** — Compare generated content against live source pages
+
+```
+python3 verify.py <plugin-dir> [options]
+
+  --delay SECS             Base delay between requests (default: 0.5)
+  --screenshot-dir DIR     Save full-page screenshots of mismatched pages
+```
 
 </details>
 

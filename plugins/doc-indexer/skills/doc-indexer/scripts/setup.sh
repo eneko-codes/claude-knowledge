@@ -37,7 +37,8 @@ source .venv/bin/activate
 #   - playwright:         Browser automation library (drives Chromium)
 #   - playwright-stealth: Anti-fingerprint patches to bypass bot detection
 #   - beautifulsoup4:     HTML parsing and DOM traversal
-#   - html2text:          HTML → markdown conversion
+#   - markdownify:        HTML → markdown conversion
+#   - pygments:           Code language guessing for unannotated blocks
 #   - lxml:               Fast HTML parser backend for BeautifulSoup
 pip install -r requirements.txt
 

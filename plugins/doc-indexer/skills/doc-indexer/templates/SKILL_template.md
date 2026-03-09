@@ -15,27 +15,25 @@ Complete reference for {library_name_title}, extracted from the official documen
 - **Plugin name:** {plugin_name}
 - **Total pages:** {total_pages}
 
-## Directory Structure
+## Contents
 
 {category_summary}
 {quick_reference}
 ## File Index
 
+Each entry shows the file path, page title, and key sub-topics (H2 headings).
+Scan this index to find the right file for your question.
+
 {file_listing}
 
 ## How to Use
 
-1. Start with `index/SITEMAP.md` for an overview of all available pages.
-2. Navigate to the relevant directory based on what you need:
-   - `reference/` for API signatures, type definitions, configuration parameters
-   - `concepts/` for architecture, design, and how-things-work explanations
-   - `guides/` for step-by-step tutorials, how-to procedures
-   - `examples/` for code samples, recipes, and cookbooks
-   - `troubleshooting/` for deprecation notices, error explanations, debugging
-3. Read the specific sub-file for detailed content.
+1. Scan the File Index above to find relevant pages by title and sub-topics.
+2. Read the specific `pages/*.md` file for detailed content.
+3. Each file includes a `> Source:` link to the original documentation URL.
 
 ## Important
 
 - All content is extracted verbatim from the official documentation.
-- Code blocks are preserved exactly as they appear in the source, with language annotations.
+- Code blocks are preserved exactly as they appear in the source.
 - If content seems outdated, re-run the doc-indexer to refresh.

@@ -71,7 +71,7 @@ def find_skill_dir(plugin_dir):
 
 
 def collect_content_files(skill_dir):
-    """Collect all markdown content files (excluding SKILL.md and SITEMAP.md).
+    """Collect all markdown content files (excluding SKILL.md).
 
     Returns a list of (relative_path, absolute_path) tuples.
     """
@@ -153,8 +153,30 @@ def extract_live_signals(page):
         let contentEl = null;
         for (const sel of selectors) {
             const el = document.querySelector(sel);
-            if (el && el.textContent.trim().length > 100) {
-                contentEl = el;
+            if (el && el.textContent.trim().length > 500) {
+                // If the match contains <nav> or <aside>, try to find a
+                // more specific child element (matching extract.py behavior)
+                if (el.querySelector('nav') || el.querySelector('aside')) {
+                    const childTags = ['article', 'section', 'div'];
+                    let found = false;
+                    for (const tag of childTags) {
+                        for (const child of el.children) {
+                            if (child.tagName.toLowerCase() === tag
+                                && child.textContent.trim().length > 500
+                                && !child.querySelector('nav')
+                                && child.tagName.toLowerCase() !== 'nav'
+                                && child.tagName.toLowerCase() !== 'aside') {
+                                contentEl = child;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+                    if (!found) contentEl = el;
+                } else {
+                    contentEl = el;
+                }
                 break;
             }
         }
@@ -268,7 +290,7 @@ def compare_signals(file_path, md_signals, live_signals):
             )
 
     # Text length — markdown should be at least 40% of live text length.
-    # html2text output is naturally shorter (no HTML tags, stripped nav).
+    # Markdown output is naturally shorter (no HTML tags, stripped nav).
     # A very low ratio suggests content was truncated or the wrong area was captured.
     if live_signals["text_length"] > 200:
         ratio = md_signals["text_length"] / live_signals["text_length"]
@@ -319,7 +341,7 @@ def verify(args):
         browser = pw.chromium.launch(headless=True)
         context = browser.new_context(
             viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
         page = context.new_page()
         Stealth().apply_stealth_sync(page)
@@ -378,7 +400,7 @@ def verify(args):
                         safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", rel_path) + ".png"
                         screenshot_path = screenshot_dir / safe_name
                         try:
-                            page.screenshot(path=str(screenshot_path))
+                            page.screenshot(path=str(screenshot_path), full_page=True)
                             log.info(f"  Screenshot saved: {screenshot_path}")
                         except Exception as e:
                             log.warning(f"  Screenshot failed: {e}")
