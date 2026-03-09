@@ -140,7 +140,7 @@ def extract_live_signals(page):
     mismatches because extract.py correctly strips those elements.
     """
     # All signals are extracted from the main content area only.
-    # The selector list matches extract.py's CONTENT_SELECTORS.
+    # The selector list matches extract.py's CONTENT_SELECTORS exactly.
     signals = page.evaluate("""() => {
         const selectors = [
             'main', 'article', '[role="main"]', '#content', '#main-content',
@@ -188,19 +188,46 @@ def extract_live_signals(page):
     }
 
 
+def check_code_block_syntax(markdown_text):
+    """Check that all fenced code blocks are properly closed.
+
+    Every opening ``` must have a matching closing ```. Returns a list of
+    line numbers where unclosed code blocks start, or an empty list if all
+    code blocks are properly formed.
+    """
+    lines = markdown_text.split("\n")
+    unclosed = []
+    in_code_block = False
+    open_line = 0
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not in_code_block:
+                in_code_block = True
+                open_line = i
+            else:
+                in_code_block = False
+
+    if in_code_block:
+        unclosed.append(open_line)
+
+    return unclosed
+
+
 def compare_signals(file_path, md_signals, live_signals):
     """Compare markdown signals against live page signals and return mismatches.
 
     Returns a list of mismatch descriptions. Empty list = all checks passed.
 
-    Thresholds are intentionally lenient:
-    - Titles: must share at least 60% of words (handles site name suffixes)
-    - Headings: markdown must have at least 50% of live headings
-      (some headings are in sidebar/nav, not main content)
-    - Code blocks: markdown must have at least 50% of live code blocks
-      (some code blocks may be in stripped nav/sidebar areas)
-    - Text length: markdown must be at least 30% of live text length
-      (html2text output is shorter than raw text due to stripped HTML/nav)
+    Thresholds:
+    - Titles: must share at least 50% of words (handles short titles better)
+    - Headings: markdown must have at least 40% of live headings
+      (accounts for sidebar headings that inflate live count)
+    - Code blocks: markdown must have at least 70% of live code blocks
+      (code blocks should be reliably captured)
+    - Text length: markdown must be at least 40% of live text length
+      (still lenient but catches major content losses)
     """
     mismatches = []
 
@@ -212,39 +239,40 @@ def compare_signals(file_path, md_signals, live_signals):
     if md_title_words and live_title_words:
         overlap = len(md_title_words & live_title_words)
         max_words = max(len(md_title_words), len(live_title_words))
-        if max_words > 0 and overlap / max_words < 0.6:
+        if max_words > 0 and overlap / max_words < 0.5:
             mismatches.append(
                 f"Title mismatch: markdown has \"{md_signals['title']}\" "
                 f"but live page has \"{live_signals['title']}\""
             )
 
-    # Heading count — markdown should have at least 50% of live headings.
-    # Live page may have headings in sidebar/nav that we intentionally strip.
+    # Heading count — markdown should have at least 40% of live headings.
+    # Live page may have headings in sidebar/nav that inflate the live count.
     if live_signals["heading_count"] > 0:
         ratio = md_signals["heading_count"] / live_signals["heading_count"]
-        if ratio < 0.5:
+        if ratio < 0.4:
             mismatches.append(
                 f"Heading count: markdown has {md_signals['heading_count']} "
                 f"but live page has {live_signals['heading_count']} "
                 f"({ratio:.0%} captured)"
             )
 
-    # Code block count — markdown should have at least 50% of live code blocks.
+    # Code block count — markdown should have at least 70% of live code blocks.
+    # Code blocks should be reliably captured by the extractor.
     if live_signals["code_block_count"] > 0:
         ratio = md_signals["code_block_count"] / live_signals["code_block_count"]
-        if ratio < 0.5:
+        if ratio < 0.7:
             mismatches.append(
                 f"Code blocks: markdown has {md_signals['code_block_count']} "
                 f"but live page has {live_signals['code_block_count']} "
                 f"({ratio:.0%} captured)"
             )
 
-    # Text length — markdown should be at least 30% of live text length.
+    # Text length — markdown should be at least 40% of live text length.
     # html2text output is naturally shorter (no HTML tags, stripped nav).
     # A very low ratio suggests content was truncated or the wrong area was captured.
     if live_signals["text_length"] > 200:
         ratio = md_signals["text_length"] / live_signals["text_length"]
-        if ratio < 0.3:
+        if ratio < 0.4:
             mismatches.append(
                 f"Content length: markdown is {md_signals['text_length']} chars "
                 f"but live page content is {live_signals['text_length']} chars "
@@ -327,8 +355,17 @@ def verify(args):
                 md_signals = extract_markdown_signals(markdown_text)
                 live_signals = extract_live_signals(page)
 
+                # Check for unclosed code blocks in the markdown
+                unclosed = check_code_block_syntax(markdown_text)
+                if unclosed:
+                    log.warning(f"  Unclosed code block(s) starting at line(s): {unclosed}")
+
                 # Compare
                 issues = compare_signals(rel_path, md_signals, live_signals)
+
+                # Add unclosed code block issues to the mismatch list
+                for line_num in unclosed:
+                    issues.append(f"Unclosed code block starting at line {line_num}")
 
                 if issues:
                     mismatched.append((rel_path, source_url, issues))

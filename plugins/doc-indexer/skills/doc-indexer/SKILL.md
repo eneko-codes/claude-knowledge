@@ -30,7 +30,7 @@ Follow these steps in order. Do not skip steps. Run each script and verify its o
 
 Collect the following. The user may provide all of them upfront, some, or none — fill in what's missing.
 
-- **Library name** — short identifier (e.g., `sqlc`, `goose`, `laravel`)
+- **Library name** — short identifier (e.g., `react`, `java`, `laravel`)
 - **Documentation root URL** — the starting page to crawl (e.g., `https://docs.sqlc.dev/en/stable/`)
 - **Path prefix restriction** — whether to restrict crawling to the URL path prefix (default: yes)
 - **Version label** — documentation version if applicable (default: `latest`)
@@ -49,10 +49,10 @@ Do not guess or fabricate URLs. Always search and confirm.
 
 **Scope:** The plugin can be installed at two scopes:
 
-| Scope | Output directory | Who can use it | Committed to git? |
-|-------|-----------------|----------------|:--:|
-| **project** | `<project-root>/.claude/plugins/<name>-docs/` | Whole team | Yes — everyone on the project gets the docs |
-| **user** | `~/.claude/plugins/<name>-docs/` | Just you | No — available in all your projects |
+| Scope       | Output directory                              | Who can use it |              Committed to git?              |
+| ----------- | --------------------------------------------- | -------------- | :-----------------------------------------: |
+| **project** | `<project-root>/.claude/plugins/<name>-docs/` | Whole team     | Yes — everyone on the project gets the docs |
+| **user**    | `~/.claude/plugins/<name>-docs/`              | Just you       |     No — available in all your projects     |
 
 Recommend **project** scope when the docs are relevant to the current project (e.g., the framework the project uses). This way the whole team benefits. Recommend **user** scope for general-purpose libraries the user works with across multiple projects.
 
@@ -69,6 +69,7 @@ python3 crawl.py <root-url> \
 ```
 
 **Verify output:**
+
 - Open `/tmp/<library>-sitemap.json`
 - Check `stats.total_fetched` — confirm the page count is reasonable
 - Check `failed` array — investigate any failures
@@ -86,6 +87,7 @@ python3 extract.py /tmp/<library>-sitemap.json \
 ```
 
 **Verify output:**
+
 - Check `/tmp/<library>-extracted/` contains one JSON file per crawled page
 - Report extraction summary to the user: file count, category breakdown
 
@@ -127,6 +129,7 @@ Group pages by topic/module by analyzing their URL paths and titles. Present as 
 After the user selects topics, review each remaining page and decide KEEP or SKIP.
 
 **KEEP** pages that contain:
+
 - API reference (function signatures, parameters, return types)
 - Configuration reference (settings, options, formats)
 - Code examples showing how to use the library
@@ -135,6 +138,7 @@ After the user selects topics, review each remaining page and decide KEEP or SKI
 - Conceptual explanations of library-specific features
 
 **SKIP** pages that contain:
+
 - Blog posts or news articles
 - Archive or category listing pages (just lists of links to other pages)
 - Contributor or community guidelines
@@ -146,8 +150,9 @@ After the user selects topics, review each remaining page and decide KEEP or SKI
 **4c-extra. Flag extraction problems.**
 
 Check each page's extracted JSON for these issues:
-- `"used_fallback_selector": true` — the extractor couldn't find the content area and fell back to `<body>`. The markdown likely contains navigation/sidebar noise. Tell the user: *"This page may not have extracted cleanly — it used a fallback selector. Keep, skip, or re-extract?"*
-- Markdown looks garbled (broken tables, truncated code blocks, navigation text mixed with content) — tell the user: *"This page's markdown looks malformed. Here's an excerpt: [first 200 chars]. Keep, skip, or flag for manual review?"*
+
+- `"used_fallback_selector": true` — the extractor couldn't find the content area and fell back to `<body>`. The markdown likely contains navigation/sidebar noise. Tell the user: _"This page may not have extracted cleanly — it used a fallback selector. Keep, skip, or re-extract?"_
+- Markdown looks garbled (broken tables, truncated code blocks, navigation text mixed with content) — tell the user: _"This page's markdown looks malformed. Here's an excerpt: [first 200 chars]. Keep, skip, or flag for manual review?"_
 - If a page's category seems wrong (e.g., a tutorial classified as "warning"), change the `category` field in the extracted JSON before building.
 
 **4d. Present the filter results to the user.**
@@ -173,6 +178,7 @@ The user can review skipped pages and override if needed. Only proceed when the 
 Generate the complete plugin from the filtered content. The `--output-dir` depends on the scope chosen in Step 1:
 
 **Project scope:**
+
 ```bash
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
@@ -181,6 +187,7 @@ python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
 ```
 
 **User scope:**
+
 ```bash
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
@@ -191,6 +198,7 @@ python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
 Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or `goose-docs`).
 
 **Verify output:**
+
 - Check the generated directory structure has: `.claude-plugin/plugin.json`, `skills/<name>-docs/SKILL.md`, subdirectories for content
 - Open the generated `SKILL.md` — confirm it lists every sub-file
 - Spot-check a few sub-files for content completeness
@@ -206,6 +214,7 @@ python3 validate.py <output-dir>
 Do NOT pass `--sitemap` here. The original sitemap contains all crawled pages, but we intentionally filtered pages in Step 4. Passing the sitemap would cause the page count check to fail.
 
 Without `--sitemap`, the validator checks:
+
 - plugin.json exists with required fields
 - SKILL.md has frontmatter and substantial content
 - SITEMAP.md exists
@@ -213,6 +222,7 @@ Without `--sitemap`, the validator checks:
 - No empty content files
 
 **Interpret results:**
+
 - Exit code 0 = all checks pass
 - Exit code 1 = gaps found — read the report and fix issues
 
@@ -227,6 +237,7 @@ python3 verify.py <output-dir> --screenshot-dir /tmp/<library>-screenshots
 ```
 
 This re-visits the original URL of every content file and compares key signals:
+
 - **Title match** — does the markdown title match the live page's H1?
 - **Heading count** — does the markdown have at least 50% of the live page's headings?
 - **Code block count** — does the markdown have at least 50% of the live page's code blocks?
@@ -235,6 +246,7 @@ This re-visits the original URL of every content file and compares key signals:
 When `--screenshot-dir` is provided, mismatched pages get a screenshot saved automatically. Use the Read tool to view screenshots of mismatched pages — this shows what the page actually looks like versus what was extracted.
 
 **Interpret results:**
+
 - Exit code 0 = all files verified
 - Exit code 1 = mismatches found — review the report
 
@@ -258,17 +270,21 @@ Do not proceed to Step 7 until all mismatches are resolved or accepted by the us
 After building and validating, install the plugin at the chosen scope.
 
 **Project scope** (shared with team via git):
+
 ```bash
 claude /plugin install <name>-docs --scope project
 ```
+
 The plugin directory at `<project-root>/.claude/plugins/<name>-docs/` should be committed to git so teammates get it automatically.
 
 **User scope** (available across all your projects):
+
 ```bash
 claude /plugin install <name>-docs --scope user
 ```
 
 Report the final results to the user:
+
 - Total pages indexed (after filtering)
 - Pages skipped and why
 - Plugin name (including version if applicable)
@@ -289,22 +305,22 @@ Do not clean up until the user has confirmed the plugin is working. They may wan
 
 All scripts are in `{PLUGIN_ROOT}/scripts/`:
 
-| Script | Purpose | Key Arguments |
-|--------|---------|---------------|
-| `crawl.py` | Discover all doc pages via BFS crawl | `<root-url>` `--output` `--max-depth` `--delay` `--same-path-prefix` |
-| `extract.py` | Fetch and convert page content to markdown | `<sitemap.json>` `--output` `--delay` |
-| `build_plugin.py` | Assemble plugin from extracted content | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
-| `validate.py` | Verify plugin structural integrity | `<plugin-dir>` |
-| `verify.py` | Compare generated content against live pages | `<plugin-dir>` `--delay` `--screenshot-dir` |
-| `setup.sh` | Create venv and install dependencies | (none) |
+| Script            | Purpose                                      | Key Arguments                                                                |
+| ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--delay` `--same-path-prefix`         |
+| `extract.py`      | Fetch and convert page content to markdown   | `<sitemap.json>` `--output` `--delay`                                        |
+| `build_plugin.py` | Assemble plugin from extracted content       | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
+| `validate.py`     | Verify plugin structural integrity           | `<plugin-dir>`                                                               |
+| `verify.py`       | Compare generated content against live pages | `<plugin-dir>` `--delay` `--screenshot-dir`                                  |
+| `setup.sh`        | Create venv and install dependencies         | (none)                                                                       |
 
 Templates are in `{PLUGIN_ROOT}/templates/`:
 
-| Template | Used By | Purpose |
-|----------|---------|---------|
-| `SKILL_template.md` | `build_plugin.py` | Generated SKILL.md for the docs plugin |
-| `plugin_json_template.json` | `build_plugin.py` | Generated plugin.json |
-| `section_template.md` | `build_plugin.py` | Individual content sub-files |
+| Template                    | Used By           | Purpose                                |
+| --------------------------- | ----------------- | -------------------------------------- |
+| `SKILL_template.md`         | `build_plugin.py` | Generated SKILL.md for the docs plugin |
+| `plugin_json_template.json` | `build_plugin.py` | Generated plugin.json                  |
+| `section_template.md`       | `build_plugin.py` | Individual content sub-files           |
 
 ## Critical Rules
 

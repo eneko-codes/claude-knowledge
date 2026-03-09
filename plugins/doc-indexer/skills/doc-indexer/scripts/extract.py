@@ -108,8 +108,14 @@ def find_main_content(soup):
     """Locate the primary content element in the page DOM.
 
     Iterates through CONTENT_SELECTORS in priority order and returns the first
-    match that contains more than 100 characters of visible text. The text length
-    threshold avoids matching empty wrapper elements.
+    match that contains more than 500 characters of visible text. The text length
+    threshold (raised from 100 to 500) avoids matching small nav sections or
+    empty wrapper elements.
+
+    If the first match contains a <nav> or <aside> child, it's likely a layout
+    wrapper rather than the actual content area. In that case, we try to find a
+    more specific child element (an <article>, <section>, or <div> with enough
+    text) before accepting the match.
 
     Falls back to <body> if no selector matches — this handles minimal HTML pages
     (e.g., raw GitHub Pages with no semantic markup). The fallback is flagged
@@ -121,8 +127,23 @@ def find_main_content(soup):
     """
     for selector in CONTENT_SELECTORS:
         el = soup.select_one(selector)
-        # Require >100 chars to avoid matching empty structural elements
-        if el and len(el.get_text(strip=True)) > 100:
+        # Require >500 chars to avoid matching small nav sections or empty wrappers
+        if el and len(el.get_text(strip=True)) > 500:
+            # If the match contains <nav> or <aside>, it may be a broad layout
+            # wrapper. Try to find a more specific child element first.
+            if el.find("nav") or el.find("aside"):
+                # Look for a child article, section, or div with substantial content
+                for child_tag in ["article", "section", "div"]:
+                    for child in el.find_all(child_tag, recursive=False):
+                        child_text = child.get_text(strip=True)
+                        # The child must have substantial content AND not itself
+                        # be a nav/aside to be a better match
+                        if (len(child_text) > 500
+                                and not child.find("nav")
+                                and child.name not in ("nav", "aside")):
+                            return child, False
+                # No better child found — use the original match, it's still
+                # the best we have. strip_noise() will clean out the nav/aside.
             return el, False
     # Fallback: entire body (or root soup if no body tag).
     # This may capture navigation, sidebar, footer — flag it.
@@ -274,7 +295,7 @@ def classify_page(title, headings, code_blocks, markdown_text):
     Categories and their heuristics:
 
     - "warning":       Pages about deprecations, breaking changes, migrations.
-                       Detected by keyword density (>= 2 warning indicators).
+                       Detected by title keywords or body keyword density (>= 3).
 
     - "example":       Pages dominated by code with minimal explanation.
                        Detected by code-to-text ratio > 0.6 (60% code).
@@ -288,6 +309,10 @@ def classify_page(title, headings, code_blocks, markdown_text):
     - "conceptual":    Explanatory content (overviews, architecture, design docs).
                        Default for text-heavy pages that don't match other categories.
 
+    Title matches are weighted 3x vs body matches (the title is the strongest
+    classification signal). URL path segments add +2 to the relevant category.
+    Heading structure (H2/H3 that look like function signatures) boosts api_score.
+
     The classification is heuristic and intentionally conservative — it's better
     to default to "conceptual" than to miscategorize an API reference as a tutorial.
     Claude reviews classifications during the workflow and can correct them.
@@ -295,21 +320,62 @@ def classify_page(title, headings, code_blocks, markdown_text):
     title_lower = title.lower()
     text_lower = markdown_text.lower()
 
+    # Extract URL path for path-based classification signal
+    url = ""
+    # The URL is not passed directly — we infer path segments from the markdown
+    # source link if present, or skip this signal. In practice, callers should
+    # pass it via the headings metadata. For now, we check if the first heading
+    # or title contains path-like info.
+    url_path = ""
+
     # Calculate code density: ratio of code block content to total page text.
     # High code density suggests example/reference pages rather than prose.
     text_len = len(markdown_text)
     code_len = sum(len(b["content"]) for b in code_blocks)
     code_ratio = code_len / max(text_len, 1)  # max(_, 1) prevents division by zero
 
-    # --- Warning detection (strict) ---
-    # Only classify as "warning" if the PAGE TITLE explicitly indicates it's a
-    # deprecation/upgrade page. Body text mentioning "deprecated" is NOT sufficient —
-    # many normal doc pages mention deprecated features in passing.
+    # --- Warning detection ---
+    # Title match is an immediate classification. Body keywords need >= 3 matches
+    # (threshold raised from 2 to avoid pages that incidentally mention "deprecated").
     warning_title_indicators = ["deprecat", "breaking change", "upgrade guide",
-                                "migration guide", "end of life", "removed in"]
+                                "migration guide", "end of life", "eol",
+                                "sunset", "removed in"]
+    warning_body_indicators = ["deprecated", "breaking change", "end of life", "eol",
+                               "sunset", "removed in", "migration guide", "upgrade guide",
+                               "no longer supported", "will be removed"]
     is_warning_title = any(ind in title_lower for ind in warning_title_indicators)
     if is_warning_title:
         return "warning"
+    warning_body_score = sum(1 for ind in warning_body_indicators if ind in text_lower)
+    if warning_body_score >= 3:
+        return "warning"
+
+    # --- URL path signal ---
+    # Check heading metadata for URL-derived path info. Some callers embed the
+    # source URL. We also check the "Source:" line in the markdown itself.
+    source_match = re.search(r'Source:\s*<?(\S+?)>?\s*$', markdown_text[:500], re.MULTILINE)
+    if source_match:
+        url_path = urlparse(source_match.group(1)).path.lower()
+
+    # URL path bonuses — add +2 to category scores for matching path segments
+    url_api_bonus = 2 if any(seg in url_path for seg in ["/api/", "/reference/", "/ref/"]) else 0
+    url_tutorial_bonus = 2 if any(seg in url_path for seg in ["/tutorial/", "/guide/", "/guides/", "/getting-started/"]) else 0
+    url_cli_bonus = 2 if "/cli/" in url_path else 0
+    url_troubleshoot_bonus = 2 if "/troubleshooting/" in url_path else 0
+
+    # --- Heading structure signal ---
+    # If most H2/H3 headings look like function/method signatures (contain
+    # parentheses or start with a type keyword), boost api_score.
+    h2h3_headings = [h["text"] for h in headings if h.get("level") in (2, 3)]
+    sig_like_count = 0
+    for ht in h2h3_headings:
+        # Headings with parentheses like "create(options)" or "Response.json()"
+        if "(" in ht and ")" in ht:
+            sig_like_count += 1
+        # Headings starting with common type prefixes: "string Name", "void Execute"
+        elif re.match(r'^(?:string|int|bool|void|array|object|float|static|public|private)\s+\w+', ht, re.IGNORECASE):
+            sig_like_count += 1
+    heading_api_bonus = 2 if (h2h3_headings and sig_like_count > len(h2h3_headings) / 2) else 0
 
     # --- Tutorial detection ---
     # Title-weighted: "getting started", "tutorial", "installation" in the title
@@ -317,10 +383,12 @@ def classify_page(title, headings, code_blocks, markdown_text):
     tutorial_title_indicators = ["getting started", "tutorial", "walkthrough",
                                 "quickstart", "quick start", "installation", "how to"]
     tutorial_body_indicators = ["step 1", "step 2", "tutorial", "walkthrough",
-                               "quickstart", "quick start", "how to", "guide"]
+                               "quickstart", "quick start", "how to", "guide",
+                               "example", "recipe", "cookbook", "hands-on",
+                               "follow along"]
     tutorial_title_score = sum(3 for ind in tutorial_title_indicators if ind in title_lower)
     tutorial_body_score = sum(1 for ind in tutorial_body_indicators if ind in text_lower)
-    tutorial_score = tutorial_title_score + tutorial_body_score
+    tutorial_score = tutorial_title_score + tutorial_body_score + url_tutorial_bonus
     if tutorial_score >= 3:
         return "tutorial"
 
@@ -331,10 +399,12 @@ def classify_page(title, headings, code_blocks, markdown_text):
     api_body_indicators = ["api reference", "api documentation", "function reference",
                           "method reference", "class reference", "type reference",
                           "parameters", "returns", "arguments", "endpoint",
-                          "request", "response", "schema"]
+                          "request", "response", "schema", "request body",
+                          "response body", "throws", "interface", "enum",
+                          "http method"]
     api_title_score = sum(3 for ind in api_title_indicators if ind in title_lower)
     api_body_score = sum(1 for ind in api_body_indicators if ind in text_lower)
-    api_score = api_title_score + api_body_score
+    api_score = api_title_score + api_body_score + url_api_bonus + url_cli_bonus + heading_api_bonus
     if api_score >= 4 or (code_ratio > 0.3 and any(extract_signatures([b]) for b in code_blocks)):
         return "api-reference"
 
@@ -398,6 +468,12 @@ def extract_warnings(markdown_text):
 # Utility functions
 # ---------------------------------------------------------------------------
 
+# Module-level set for tracking generated filenames across calls to url_to_filename.
+# Prevents collisions when two different URLs produce the same filename
+# (e.g., /docs/config and /api/config both become "config.json").
+_used_filenames = set()
+
+
 def url_to_filename(url):
     """Convert a URL to a filesystem-safe filename for the extracted JSON.
 
@@ -407,6 +483,7 @@ def url_to_filename(url):
     - Collapse consecutive underscores
     - Truncate to 200 chars to stay within filesystem limits
     - Append .json extension
+    - Detect collisions and append -1, -2, etc. if needed
 
     Example: https://docs.example.com/en/stable/api/config.html → en_stable_api_config.html.json
     """
@@ -419,7 +496,17 @@ def url_to_filename(url):
     safe = re.sub(r"_+", "_", safe)
     if len(safe) > 200:
         safe = safe[:200]
-    return safe + ".json"
+
+    candidate = safe + ".json"
+    if candidate.lower() in _used_filenames:
+        counter = 1
+        while f"{safe}-{counter}.json".lower() in _used_filenames:
+            counter += 1
+        candidate = f"{safe}-{counter}.json"
+        log.warning(f"  Filename collision for '{url}' → {candidate}")
+
+    _used_filenames.add(candidate.lower())
+    return candidate
 
 
 def humanized_delay(base_delay):
@@ -474,15 +561,21 @@ def extract_page(page_obj, url, converter):
 
     Returns a dict with all extracted data, ready to be written as JSON.
     """
+    # Step 0: Expand hidden content via JavaScript BEFORE capturing HTML.
+    # Many doc sites use <details>/<summary> for collapsible sections.
+    # Expanding them in the live DOM ensures their content is visible to
+    # both Playwright's rendered HTML and our BeautifulSoup extraction.
+    try:
+        page_obj.evaluate("document.querySelectorAll('details').forEach(d => d.open = true)")
+    except Exception:
+        pass  # Non-critical — we also expand via BeautifulSoup below as fallback
+
     html = page_obj.content()
     # lxml is faster than html.parser and more lenient with malformed HTML
     soup = BeautifulSoup(html, "lxml")
 
-    # Step 0: Expand hidden content before extraction.
-    # Many doc sites use <details>/<summary> for collapsible sections and JS tabs
-    # (e.g., Pest/PHPUnit on Laravel). We need to make this content visible so
-    # BeautifulSoup can see it and html2text can convert it.
-    # Open all <details> elements by adding the "open" attribute.
+    # Fallback: also expand <details> in the parsed DOM in case the JS injection
+    # didn't cover dynamically inserted elements or the page blocked evaluate().
     for details in soup.find_all("details"):
         details["open"] = ""
 
@@ -634,10 +727,13 @@ def main():
 
             try:
                 # Navigate with retry logic for transient failures.
+                # First attempt: standard timeout. On failure, retry once with
+                # 5-second delay and doubled timeout before giving up.
                 response = None
+                nav_timeout = 30000
                 for attempt in range(3):
                     try:
-                        response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        response = page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
                         try:
                             page.wait_for_load_state("networkidle", timeout=5000)
                         except Exception:
@@ -645,8 +741,9 @@ def main():
                         break
                     except Exception as nav_err:
                         if attempt < 2:
-                            log.warning(f"  Attempt {attempt+1} failed: {nav_err}. Retrying...")
-                            time.sleep(2 * (attempt + 1))
+                            log.warning(f"  Navigation attempt {attempt+1} failed: {nav_err}. Retrying...")
+                            time.sleep(5)
+                            nav_timeout *= 2  # Double timeout on retry
                         else:
                             raise
 
@@ -654,8 +751,28 @@ def main():
                     log.warning(f"HTTP {response.status} for {url}, skipping")
                     continue
 
-                # Run the full extraction pipeline for this page
-                data = extract_page(page, url, converter)
+                # Run the full extraction pipeline with retry.
+                # If extraction fails (e.g., page didn't fully render), retry
+                # once after a 5-second delay with a fresh page load.
+                data = None
+                try:
+                    data = extract_page(page, url, converter)
+                except Exception as extract_err:
+                    log.warning(f"  Extraction failed: {extract_err}. Retrying after 5s...")
+                    time.sleep(5)
+                    try:
+                        page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout * 2)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=10000)
+                        except Exception:
+                            pass
+                        data = extract_page(page, url, converter)
+                    except Exception as retry_err:
+                        log.error(f"  Extraction retry also failed: {retry_err}")
+                        continue
+
+                if data is None:
+                    continue
 
                 # Accumulate category counts for the summary
                 cat = data["category"]

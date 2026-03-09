@@ -209,9 +209,9 @@ def check_skill_md(skill_dir, result):
 def check_page_count(sitemap, md_files, skill_dir, result):
     """Verify that the number of content files matches the sitemap page count.
 
-    Warning pages are consolidated into a single WARNINGS.md, so we subtract
-    warning page count from the expected total. The check passes if we have
-    at least as many content files as non-warning sitemap pages.
+    Warning pages may be consolidated into a warnings/ directory, so we count
+    actual warning files and use that as expected slack. The check passes if
+    content_count + warning_slack >= sitemap_pages.
     """
     # First check that SITEMAP.md exists
     sitemap_md = skill_dir / "index" / "SITEMAP.md"
@@ -231,19 +231,41 @@ def check_page_count(sitemap, md_files, skill_dir, result):
     content_files = {k: v for k, v in md_files.items() if not k.startswith("index/")}
     content_count = len(content_files)
 
-    # Simple count comparison — each page in the sitemap should have a
-    # corresponding content file. Warning pages are no longer consolidated.
-    if content_count >= sitemap_pages:
+    # Count actual warning files in the warnings/ directory as expected slack.
+    # Warning pages from the sitemap may be consolidated into fewer files in
+    # warnings/, so the difference is legitimate and expected.
+    warnings_dir = skill_dir / "warnings"
+    warning_file_count = 0
+    if warnings_dir.exists() and warnings_dir.is_dir():
+        warning_file_count = len(list(warnings_dir.glob("*.md")))
+
+    # Also count warning entries from the SITEMAP.md WARNINGS section
+    sitemap_md_content = sitemap_md.read_text(encoding="utf-8")
+    warning_section_count = 0
+    in_warnings_section = False
+    for line in sitemap_md_content.split("\n"):
+        if re.match(r"^#{1,3}\s+.*[Ww]arning", line):
+            in_warnings_section = True
+            continue
+        if in_warnings_section and re.match(r"^#{1,3}\s+", line):
+            break  # Hit the next section
+        if in_warnings_section and line.strip().startswith("- "):
+            warning_section_count += 1
+
+    # Use the larger of the two warning counts as slack
+    warning_slack = max(warning_file_count, warning_section_count)
+
+    if content_count + warning_slack >= sitemap_pages:
         result.add_check(
             "Page count matches",
             True,
-            f"{content_count} content files for {sitemap_pages} sitemap pages",
+            f"{content_count} content files for {sitemap_pages} sitemap pages (warning slack: {warning_slack})",
         )
     else:
         result.add_check(
             "Page count matches",
             False,
-            f"{content_count} content files but {sitemap_pages} sitemap pages (diff: {sitemap_pages - content_count})",
+            f"{content_count} content files but {sitemap_pages} sitemap pages (warning slack: {warning_slack}, diff: {sitemap_pages - content_count - warning_slack})",
         )
 
 
@@ -275,18 +297,23 @@ def check_section_coverage(sitemap, md_files, skill_dir, result):
         result.add_warning("No headings found in sitemap — skipping section coverage")
         return
 
-    # Concatenate all content files into one string for substring search.
-    # This is O(n*m) but fast enough for documentation-scale data.
-    all_content = ""
+    # Extract actual markdown headings from all content files.
+    # We match against heading lines (lines starting with # markers) rather than
+    # doing substring search against the full text, which would produce false
+    # positives (e.g., heading "Config" matching inside the word "Configuration").
+    all_md_headings = set()
+    heading_line_pattern = re.compile(r"^#{1,6}\s+(.+)", re.MULTILINE)
     for rel_path, filepath in md_files.items():
-        all_content += filepath.read_text(encoding="utf-8") + "\n"
+        content = filepath.read_text(encoding="utf-8")
+        for match in heading_line_pattern.finditer(content):
+            all_md_headings.add(match.group(1).strip().lower())
 
-    # Case-insensitive substring match for each heading
+    # Compare sitemap headings against extracted markdown headings
     found = 0
     missing = []
     for heading in all_headings:
         normalized = heading.lower().strip()
-        if normalized in all_content.lower():
+        if normalized in all_md_headings:
             found += 1
         else:
             missing.append(heading)
@@ -362,7 +389,8 @@ def check_empty_files(md_files, result):
 
     Empty files indicate extraction failures where a page was processed but
     no content was captured (e.g., the content area selector didn't match).
-    Files under 50 characters likely contain only a heading with no body.
+    Files under 200 characters likely contain only a heading and source URL
+    template with no real content body.
     """
     empty = []
     placeholder = []
@@ -370,8 +398,10 @@ def check_empty_files(md_files, result):
         content = filepath.read_text(encoding="utf-8").strip()
         if not content:
             empty.append(rel_path)
-        elif len(content) < 50:
-            # 50 chars is roughly "# Title\n\n> Source: url" — just a heading, no content
+        elif len(content) < 200:
+            # 200 chars ensures there's actual content beyond just the
+            # "# Title\n\n> Source: url" template boilerplate (~80 chars).
+            # The previous 50-char threshold was too low — template alone passed.
             placeholder.append(rel_path)
 
     if empty:
@@ -380,7 +410,7 @@ def check_empty_files(md_files, result):
         result.add_check("No empty files", True, f"All {len(md_files)} files have content")
 
     if placeholder:
-        result.add_warning(f"{len(placeholder)} files with very short content (<50 chars): {placeholder[:5]}")
+        result.add_warning(f"{len(placeholder)} files with very short content (<200 chars): {placeholder[:5]}")
 
 
 def check_signature_coverage(sitemap, md_files, result):
@@ -407,12 +437,17 @@ def check_signature_coverage(sitemap, md_files, result):
     if not sig_headings:
         return  # No signature-like headings, skip this check
 
-    # Search all content files for each signature heading
-    all_content = ""
+    # Search for signatures within code blocks only (content between ``` markers),
+    # not the entire file text. Signatures are code artifacts and should appear
+    # inside fenced code blocks if they were properly extracted.
+    code_block_pattern = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+    all_code_content = ""
     for filepath in md_files.values():
-        all_content += filepath.read_text(encoding="utf-8") + "\n"
+        content = filepath.read_text(encoding="utf-8")
+        for match in code_block_pattern.finditer(content):
+            all_code_content += match.group(1) + "\n"
 
-    found = sum(1 for sig in sig_headings if sig.lower() in all_content.lower())
+    found = sum(1 for sig in sig_headings if sig.lower() in all_code_content.lower())
     if sig_headings:
         coverage = found / len(sig_headings) * 100
         if coverage >= 80:

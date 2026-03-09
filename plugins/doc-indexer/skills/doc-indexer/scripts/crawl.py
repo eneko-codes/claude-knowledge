@@ -28,6 +28,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import random
 import sys
 import time
@@ -82,13 +83,17 @@ def normalize_url(url):
     return url
 
 
-def is_doc_link(url):
+def is_doc_link(url, path_prefix=""):
     """Filter out URLs that are clearly not documentation pages.
 
     Heuristic-based: we skip binary assets (images, archives), non-doc site
     sections (blog, changelog, pricing), and data files (JSON, XML, RSS).
     This keeps the crawl focused on actual documentation content and avoids
     downloading large files or hitting non-doc endpoints.
+
+    When a path_prefix is provided (e.g., "/docs/12.x/"), skip_paths are
+    checked both as absolute paths and relative to the prefix. For example,
+    skip_path "/blog" will match both "/blog" and "/docs/12.x/blog".
     """
     parsed = urlparse(url)
     path = parsed.path.lower()
@@ -103,10 +108,18 @@ def is_doc_link(url):
     if any(path.endswith(ext) for ext in skip_extensions):
         return False
 
-    # Non-documentation sections — these exist on the same domain but aren't docs
+    # Non-documentation sections — these exist on the same domain but aren't docs.
+    # Check both absolute paths and paths relative to the prefix so that
+    # e.g. "/blog" is also skipped when it appears as "/docs/12.x/blog".
     skip_paths = ("/blog", "/changelog", "/releases", "/search", "/login", "/signup", "/pricing")
-    if any(path.startswith(sp) for sp in skip_paths):
-        return False
+    for sp in skip_paths:
+        if path.startswith(sp):
+            return False
+        # If there's a path prefix, also check the path relative to that prefix
+        if path_prefix and path_prefix != "/":
+            prefixed = path_prefix.rstrip("/").lower() + sp
+            if path.startswith(prefixed):
+                return False
 
     return True
 
@@ -135,8 +148,9 @@ def should_follow(url, root_domain, root_path_prefix, same_path_prefix):
     if same_path_prefix and not parsed.path.startswith(root_path_prefix):
         return False
 
-    # Final filter: skip non-documentation resources
-    if not is_doc_link(url):
+    # Final filter: skip non-documentation resources.
+    # Pass the path prefix so skip_paths work relative to the prefix too.
+    if not is_doc_link(url, path_prefix=root_path_prefix):
         return False
 
     return True
@@ -203,6 +217,53 @@ def humanized_delay(base_delay):
     return max(0.2, base_delay + jitter)
 
 
+CHECKPOINT_INTERVAL = 20  # Save checkpoint every N pages
+
+
+def checkpoint_path(output_path):
+    """Return the checkpoint file path for a given output file."""
+    return output_path + ".checkpoint.json"
+
+
+def save_checkpoint(cp_path, visited, queue, pages, failed, redirect_seen):
+    """Save crawl progress to a checkpoint file.
+
+    Called every CHECKPOINT_INTERVAL pages so that a crashed crawl can be
+    resumed without re-fetching already-visited pages.
+    """
+    data = {
+        "visited": list(visited),
+        "queue": list(queue),  # list of (url, depth) tuples
+        "pages": pages,
+        "failed": failed,
+        "redirect_seen": list(redirect_seen),
+    }
+    # Write to a temp file first, then rename for atomic replacement
+    tmp_path = cp_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp_path, cp_path)
+    log.info(f"  Checkpoint saved ({len(pages)} pages crawled)")
+
+
+def load_checkpoint(cp_path):
+    """Load crawl progress from a checkpoint file.
+
+    Returns (visited, queue, pages, failed, redirect_seen) or None if no
+    checkpoint exists.
+    """
+    if not os.path.exists(cp_path):
+        return None
+    with open(cp_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    visited = set(data["visited"])
+    queue = deque(tuple(item) for item in data["queue"])
+    pages = data["pages"]
+    failed = data["failed"]
+    redirect_seen = set(data.get("redirect_seen", []))
+    return visited, queue, pages, failed, redirect_seen
+
+
 def crawl(args):
     """Main crawl loop: BFS traversal of documentation pages.
 
@@ -235,20 +296,35 @@ def crawl(args):
     else:
         same_path_prefix_value = root_path_prefix
 
-    # BFS state: visited tracks all URLs we've seen (queued or fetched) to avoid cycles.
-    # The queue holds (url, depth) tuples for pending visits.
-    visited = set()
-    queue = deque()
-    queue.append((root_url, 0))
-    visited.add(root_url)
+    # Check for an existing checkpoint to resume from
+    cp_path = checkpoint_path(args.output)
+    checkpoint = load_checkpoint(cp_path)
 
-    # Results: successfully crawled pages and failed attempts
-    pages = []
-    failed = []
+    if checkpoint:
+        visited, queue, pages, failed, redirect_seen = checkpoint
+        log.info(f"Resuming from checkpoint: {len(pages)} pages already crawled, {len(queue)} URLs queued")
+    else:
+        # BFS state: visited tracks all URLs we've seen (queued or fetched) to avoid cycles.
+        # The queue holds (url, depth) tuples for pending visits.
+        visited = set()
+        queue = deque()
+        queue.append((root_url, 0))
+        visited.add(root_url)
+
+        # Track all URLs seen during redirect resolution to detect redirect cycles.
+        # If any URL in a redirect chain has been visited before, we skip the page.
+        redirect_seen = set()
+
+        # Results: successfully crawled pages and failed attempts
+        pages = []
+        failed = []
 
     log.info(f"Starting crawl from {root_url}")
     log.info(f"Domain: {root_domain}, Path prefix: {same_path_prefix_value}")
     log.info(f"Max depth: {args.max_depth}, Delay: {args.delay}s, Same-path-prefix: {args.same_path_prefix}")
+
+    # Counter for checkpoint saving interval
+    pages_since_checkpoint = 0
 
     # Launch a single browser instance for the entire crawl.
     # Reusing one browser context is faster than launching per-page and maintains
@@ -286,10 +362,11 @@ def crawl(args):
             log.info(f"[{len(pages)+1}/{len(visited)}] depth={depth} {url}")
 
             try:
-                # Navigate with retry logic for transient failures.
-                # Retries up to 2 times (3 total attempts) with increasing delay.
+                # Navigate with retry logic for transient failures (timeout,
+                # network error). Retry once with a 5-second delay before
+                # marking as failed.
                 response = None
-                for attempt in range(3):
+                for attempt in range(2):
                     try:
                         response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
                         try:
@@ -298,9 +375,9 @@ def crawl(args):
                             pass
                         break  # Success — exit retry loop
                     except Exception as nav_err:
-                        if attempt < 2:
-                            log.warning(f"  Attempt {attempt+1} failed: {nav_err}. Retrying...")
-                            time.sleep(2 * (attempt + 1))
+                        if attempt == 0:
+                            log.warning(f"  Attempt 1 failed: {nav_err}. Retrying in 5s...")
+                            time.sleep(5)
                         else:
                             raise  # Final attempt — let the outer handler catch it
 
@@ -315,14 +392,29 @@ def crawl(args):
                     continue
 
                 # After navigation, the browser may have followed redirects.
-                # page.url gives us the final URL. If it's a page we've already
-                # visited (e.g., /docs redirects to /docs/intro which we crawled
-                # via a sidebar link), skip it to avoid duplicates.
+                # page.url gives us the final URL. Track the full redirect chain
+                # to detect redirect cycles — if any URL in the chain has been
+                # seen before (in visited or redirect_seen), skip it.
                 final_url = normalize_url(page.url)
-                if final_url != url and final_url in visited:
+
+                # Build redirect chain from the response
+                redirect_chain = set()
+                if response:
+                    req = response.request
+                    while req:
+                        redirect_chain.add(normalize_url(req.url))
+                        req = req.redirected_from
+                redirect_chain.add(final_url)
+
+                # Check for cycles: if any URL in the chain was already seen
+                chain_overlap = redirect_chain & redirect_seen
+                if final_url != url and (final_url in visited or chain_overlap):
                     log.info(f"Redirected to already-visited: {final_url}")
                     time.sleep(humanized_delay(args.delay))
                     continue
+
+                # Record all URLs in the chain as seen
+                redirect_seen.update(redirect_chain)
 
                 # Extract page metadata from the rendered DOM
                 title, headings, links = extract_page_data(page)
@@ -349,6 +441,12 @@ def crawl(args):
                 if new_links > 0:
                     log.info(f"  Found {new_links} new links")
 
+                # Periodically save progress to checkpoint file
+                pages_since_checkpoint += 1
+                if pages_since_checkpoint >= CHECKPOINT_INTERVAL:
+                    save_checkpoint(cp_path, visited, queue, pages, failed, redirect_seen)
+                    pages_since_checkpoint = 0
+
             except Exception as e:
                 # Catch-all for network errors, timeouts, and Playwright crashes.
                 # We log the error and continue crawling — one broken page shouldn't
@@ -361,6 +459,11 @@ def crawl(args):
             time.sleep(humanized_delay(args.delay))
 
         browser.close()
+
+    # Crawl completed successfully — remove the checkpoint file
+    if os.path.exists(cp_path):
+        os.remove(cp_path)
+        log.info("Checkpoint file removed (crawl completed)")
 
     # Build the sitemap output structure.
     # This JSON is the input for extract.py (the next pipeline step).

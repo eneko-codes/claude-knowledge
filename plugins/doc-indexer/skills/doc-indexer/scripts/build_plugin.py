@@ -12,7 +12,7 @@ Claude Code documentation plugin with the standard directory structure:
         ├── api/                          # API reference pages
         ├── concepts/                     # Conceptual + tutorial pages
         ├── examples/                     # Code-heavy example pages
-        └── warnings/WARNINGS.md          # Deprecation notices
+        └── troubleshooting/               # Deprecation notices, individual files
 
 The generated SKILL.md is the entry point for Claude — it lists every sub-file
 so Claude can navigate to the relevant section based on the user's question.
@@ -170,8 +170,149 @@ def render_template(template, **kwargs):
 
 
 # ---------------------------------------------------------------------------
+# Code language detection
+# ---------------------------------------------------------------------------
+
+def detect_language(code_content):
+    """Detect the programming language of a code block by analyzing its content.
+
+    Uses simple heuristic pattern matching — checks for language-specific keywords,
+    syntax patterns, and common CLI prefixes. Returns the language string suitable
+    for markdown fenced code block annotations (e.g., "php", "bash", "json").
+
+    Returns empty string if the language cannot be determined with reasonable
+    confidence. It's better to leave a code block unannotated than to guess wrong.
+    """
+    content = code_content.strip()
+    if not content:
+        return ""
+
+    # --- XML (check before HTML since XML declaration is unambiguous) ---
+    if content.startswith("<?xml"):
+        return "xml"
+
+    # --- PHP ---
+    php_markers = ["<?php", "namespace ", "use \\", "->", "$this", "Route::", "Artisan::"]
+    if any(marker in content for marker in php_markers):
+        # "function " alone is ambiguous (could be JS), but with PHP markers it's PHP
+        if "function " in content or any(m in content for m in ["<?php", "$this", "->", "Route::", "Artisan::"]):
+            return "php"
+
+    # --- Blade (Laravel templates — check before HTML since blade contains HTML) ---
+    blade_markers = ["@csrf", "@if", "@foreach", "@extends", "@section", "@yield", "@component"]
+    if any(marker in content for marker in blade_markers):
+        return "blade"
+    # {{ }} syntax without other template engines
+    if "{{ " in content and "@" in content:
+        return "blade"
+
+    # --- HTML ---
+    html_markers = ["<!DOCTYPE", "<html", "<head", "<body", "<form", "<div", "<meta", "<script", "<link rel"]
+    if any(marker in content for marker in html_markers):
+        return "html"
+
+    # --- Bash / shell commands ---
+    first_line = content.split("\n")[0].strip()
+    bash_prefixes = ["php artisan", "composer ", "npm ", "npx ", "curl ", "./", "cd ",
+                     "mkdir ", "cp ", "mv ", "rm ", "chmod ", "chown ", "sudo ",
+                     "git ", "docker ", "pip ", "python ", "ruby ", "go ",
+                     "export ", "source ", "echo ", "cat ", "ls ", "grep "]
+    if any(first_line.startswith(prefix) for prefix in bash_prefixes):
+        return "bash"
+    if first_line.startswith("#!") or first_line.startswith("$ "):
+        return "bash"
+
+    # --- JSON ---
+    if (content.startswith("{") or content.startswith("[")) and '": ' in content:
+        return "json"
+
+    # --- SQL ---
+    sql_markers = ["CREATE TABLE", "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "ALTER TABLE",
+                   "DROP TABLE", "CREATE INDEX"]
+    content_upper = content.upper()
+    if any(marker in content_upper for marker in sql_markers):
+        return "sql"
+
+    # --- CSS ---
+    css_markers = ["@media", "@tailwind", "@import", "@keyframes"]
+    if any(marker in content for marker in css_markers):
+        return "css"
+    # Class/ID selectors with braces: .class { or #id {
+    if re.search(r'[.#]\w[\w-]*\s*\{', content):
+        return "css"
+
+    # --- YAML ---
+    # Indented key: value patterns across multiple lines, no braces
+    yaml_lines = [l for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+    if yaml_lines and all(re.match(r'^[\s-]*[\w._-]+\s*:', l) or l.strip().startswith("-") for l in yaml_lines[:5]):
+        return "yaml"
+
+    # --- env (dotenv files) ---
+    env_lines = [l for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+    if env_lines and all(re.match(r'^[A-Z][A-Z0-9_]*=', l.strip()) for l in env_lines[:5]):
+        return "env"
+
+    # --- INI ---
+    if re.match(r'^\[[\w. -]+\]\s*$', first_line):
+        return "ini"
+
+    # --- JavaScript (check after PHP to avoid false positives from shared "function" keyword) ---
+    js_markers = ["document.", "window.", "$.", "const ", "let ", "import ", "export ",
+                  "require(", "module.exports", "addEventListener", "console.log"]
+    if any(marker in content for marker in js_markers):
+        # Make sure it's not PHP masquerading as JS
+        if not any(m in content for m in ["<?php", "$this", "->", "::"]):
+            return "js"
+
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Content generation
 # ---------------------------------------------------------------------------
+
+def annotate_code_blocks(markdown_text, code_blocks):
+    """Annotate unlabeled fenced code blocks in markdown with detected languages.
+
+    Finds fenced code blocks (``` ... ```) that have no language annotation and
+    attempts to detect the language from the code content. If a language is
+    detected, the opening fence is updated to include it (e.g., ```php).
+
+    Uses the extracted code_blocks list (which has language info from CSS classes)
+    as a first pass — only falls back to heuristic detection for blocks where
+    the extractor couldn't determine the language.
+    """
+    # Build a lookup of code block contents to their known languages
+    known_languages = {}
+    for cb in code_blocks:
+        if cb.get("language"):
+            # Use first 80 chars of content as key (enough to identify uniquely)
+            key = cb["content"].strip()[:80]
+            known_languages[key] = cb["language"]
+
+    def replace_fence(match):
+        lang = match.group(1) or ""
+        code = match.group(2)
+        if lang:
+            # Already has a language annotation — leave it alone
+            return match.group(0)
+
+        # Try to find a known language from the extracted code blocks
+        code_stripped = code.strip()[:80]
+        detected = known_languages.get(code_stripped, "")
+
+        # Fall back to heuristic detection
+        if not detected:
+            detected = detect_language(code)
+
+        if detected:
+            return f"```{detected}\n{code}```"
+        return match.group(0)
+
+    # Match fenced code blocks: ```lang\n...``` (lang may be empty)
+    pattern = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+    return pattern.sub(replace_fence, markdown_text)
+
 
 def generate_section_file(page, library_name):
     """Generate a markdown sub-file for a single documentation page.
@@ -179,14 +320,18 @@ def generate_section_file(page, library_name):
     Each sub-file contains:
     - The page title as an H1 heading
     - A "Source:" link to the original URL (for reference/verification)
-    - The full extracted markdown content (verbatim, not summarized)
+    - The full extracted markdown content with annotated code blocks
     - Any deprecation warnings highlighted at the bottom
     """
     template = load_template("section_template.md")
     title = page.get("title", "Untitled")
     url = page.get("url", "")
     markdown = page.get("markdown", "")
+    code_blocks = page.get("code_blocks", [])
     warnings = page.get("warnings", [])
+
+    # Annotate unlabeled code blocks with detected languages
+    markdown = annotate_code_blocks(markdown, code_blocks)
 
     # Format warnings as a blockquote section if any exist
     warnings_block = ""
@@ -316,7 +461,7 @@ def build_plugin(args):
     1. Load all extracted JSON files
     2. Group pages by category
     3. Create plugin directory structure
-    4. Generate content sub-files (one .md per page, warnings consolidated)
+    4. Generate content sub-files (one .md per page, including individual warning files)
     5. Generate index/SITEMAP.md (full page listing)
     6. Generate SKILL.md (entry point with file index and quick reference)
     7. Generate plugin.json (metadata)
