@@ -59,7 +59,7 @@ def parse_args():
     p.add_argument("root_url", help="Starting URL to crawl")
     p.add_argument("--output", "-o", default="sitemap.json", help="Output file path (default: sitemap.json)")
     p.add_argument("--max-depth", type=int, default=10, help="Maximum crawl depth (default: 10)")
-    p.add_argument("--delay", type=float, default=1.5, help="Base delay between requests in seconds (default: 1.5)")
+    p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     p.add_argument("--same-path-prefix", action="store_true", help="Only follow links sharing the root URL path prefix")
     return p.parse_args()
 
@@ -287,14 +287,17 @@ def crawl(args):
 
             try:
                 # Navigate to the page. wait_until="domcontentloaded" fires when the
-                # HTML is parsed (faster than "networkidle" which waits for all assets).
-                # 30s timeout handles slow-loading pages without hanging indefinitely.
+                # HTML is parsed. 30s timeout handles slow pages without hanging.
                 response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-                # Extra 1s wait for JS frameworks to render content.
-                # Docusaurus/Nextra/VitePress hydrate after DOMContentLoaded, so the
-                # actual doc content may not be in the DOM yet when that event fires.
-                page.wait_for_timeout(1000)
+                # Wait for network to go idle (no requests for 500ms) instead of a
+                # fixed timeout. This adapts to each page: static pages finish in
+                # ~200ms, JS-heavy SPAs get the time they need to hydrate.
+                # Falls back gracefully if networkidle never fires (timeout after 5s).
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass  # Timeout is fine — some pages have perpetual polling
 
                 status = response.status if response else 0
 

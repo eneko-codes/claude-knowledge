@@ -44,7 +44,7 @@ log = logging.getLogger("verify")
 def parse_args():
     p = argparse.ArgumentParser(description="Verify generated plugin content against live source pages")
     p.add_argument("plugin_dir", help="Path to the generated plugin directory")
-    p.add_argument("--delay", type=float, default=1.0, help="Base delay between requests in seconds (default: 1.0)")
+    p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     p.add_argument(
         "--screenshot-dir",
         default="",
@@ -296,7 +296,11 @@ def verify(args):
             try:
                 # Navigate to the live page
                 response = page.goto(source_url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(1500)
+                # Wait for network idle instead of fixed timeout — adapts to page speed
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
 
                 if response and response.status >= 400:
                     skipped.append((rel_path, f"HTTP {response.status} for {source_url}"))

@@ -48,7 +48,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Extract content from crawled documentation pages")
     p.add_argument("sitemap", help="Path to sitemap.json from crawl.py")
     p.add_argument("--output", "-o", default="extracted", help="Output directory (default: extracted)")
-    p.add_argument("--delay", type=float, default=1.0, help="Base delay between requests in seconds (default: 1.0)")
+    p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     return p.parse_args()
 
 
@@ -564,9 +564,13 @@ def main():
 
             try:
                 response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                # Longer wait than crawler (1.5s vs 1s) because we need the full
-                # content to be rendered, not just the link structure
-                page.wait_for_timeout(1500)
+                # Wait for network to go idle (no requests for 500ms) instead of a
+                # fixed timeout. Adapts to each page — static pages finish fast,
+                # JS-heavy SPAs get time to hydrate. 5s cap for pages with perpetual polling.
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
 
                 if response and response.status >= 400:
                     log.warning(f"HTTP {response.status} for {url}, skipping")

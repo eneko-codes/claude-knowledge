@@ -65,8 +65,7 @@ cd {PLUGIN_ROOT}/scripts
 source .venv/bin/activate
 python3 crawl.py <root-url> \
   --output /tmp/<library>-sitemap.json \
-  --same-path-prefix \
-  --delay 1.5
+  --same-path-prefix
 ```
 
 **Verify output:**
@@ -83,8 +82,7 @@ Run the extractor on the sitemap:
 
 ```bash
 python3 extract.py /tmp/<library>-sitemap.json \
-  --output /tmp/<library>-extracted/ \
-  --delay 1.0
+  --output /tmp/<library>-extracted/
 ```
 
 **Verify output:**
@@ -225,7 +223,7 @@ If validation fails, fix the identified gaps and re-validate.
 Run the accuracy verifier to compare EVERY generated file against its live source page:
 
 ```bash
-python3 verify.py <output-dir> --delay 1.0 --screenshot-dir /tmp/<library>-screenshots
+python3 verify.py <output-dir> --screenshot-dir /tmp/<library>-screenshots
 ```
 
 This re-visits the original URL of every content file and compares key signals:
@@ -322,7 +320,7 @@ Templates are in `{PLUGIN_ROOT}/templates/`:
 
 6. **Validate and spot-check.** Always run `validate.py` after `build_plugin.py`, then spot-check 3-5 files for accuracy. Do not skip these steps.
 
-7. **Respect rate limits.** Use the default delay (1.5s) unless the user explicitly asks for faster crawling. Do not reduce delay below 0.5s.
+7. **Respect rate limits.** The default delay is 0.5s between requests. If a script starts getting HTTP 429 (Too Many Requests) or 403 errors, re-run with a higher delay: `--delay 2.0`. If errors persist, try `--delay 5.0`. Tell the user what's happening and why you're increasing the delay.
 
 8. **Report, don't assume.** After each step, report results to the user. Do not silently skip failed pages or empty extractions. The user decides how to handle issues.
 
