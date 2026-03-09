@@ -55,6 +55,11 @@ def parse_args():
         default="",
         help="Output directory (default: ../../plugins/docs-<library> relative to scripts/)",
     )
+    p.add_argument(
+        "--skill-only",
+        action="store_true",
+        help="Output just the skill directory (SKILL.md + pages/) without plugin wrapper",
+    )
     return p.parse_args()
 
 
@@ -272,17 +277,18 @@ def build_plugin(args):
 
     log.info(f"  Total: {len(pages)} pages (flat structure)")
 
-    # Set up the plugin directory structure following Claude Code plugin conventions:
-    # .claude-plugin/plugin.json (required metadata)
-    # skills/<name>/SKILL.md (required skill definition)
-    # Skill name includes version when not "latest" so versioned plugins
-    # have distinct skill identifiers (e.g., "laravel-11-docs" vs "laravel-12-docs")
+    # Set up the directory structure.
+    # In skill-only mode, output_dir IS the skill directory (SKILL.md + pages/).
+    # In plugin mode, output_dir contains the full plugin structure.
     skill_name = f"{versioned_library}-docs"
-    skill_dir = output_dir / "skills" / skill_name
-    plugin_meta_dir = output_dir / ".claude-plugin"
 
-    for d in [plugin_meta_dir]:
-        d.mkdir(parents=True, exist_ok=True)
+    if args.skill_only:
+        skill_dir = output_dir
+        plugin_meta_dir = None
+    else:
+        skill_dir = output_dir / "skills" / skill_name
+        plugin_meta_dir = output_dir / ".claude-plugin"
+        plugin_meta_dir.mkdir(parents=True, exist_ok=True)
 
     # Track all generated files for the SKILL.md file listing
     file_listing_lines = []
@@ -339,16 +345,21 @@ def build_plugin(args):
     skill_path.write_text(skill_content, encoding="utf-8")
     log.info(f"Wrote {skill_path}")
 
-    # Generate plugin.json metadata
-    plugin_json_content = generate_plugin_json(plugin_name, library, version, source_url)
-    plugin_json_path = plugin_meta_dir / "plugin.json"
-    plugin_json_path.write_text(plugin_json_content, encoding="utf-8")
-    log.info(f"Wrote {plugin_json_path}")
+    # Generate plugin.json metadata (skip in skill-only mode)
+    if plugin_meta_dir is not None:
+        plugin_json_content = generate_plugin_json(plugin_name, library, version, source_url)
+        plugin_json_path = plugin_meta_dir / "plugin.json"
+        plugin_json_path.write_text(plugin_json_content, encoding="utf-8")
+        log.info(f"Wrote {plugin_json_path}")
 
     # Final summary
     log.info("=" * 60)
-    log.info(f"Plugin built successfully: {output_dir}")
-    log.info(f"Total files: {len(written_files) + 2} (content + SKILL + plugin.json)")
+    if args.skill_only:
+        log.info(f"Skill built successfully: {output_dir}")
+        log.info(f"Total files: {len(written_files) + 1} (content + SKILL.md)")
+    else:
+        log.info(f"Plugin built successfully: {output_dir}")
+        log.info(f"Total files: {len(written_files) + 2} (content + SKILL + plugin.json)")
     log.info(f"Skill name: {skill_name}")
 
 

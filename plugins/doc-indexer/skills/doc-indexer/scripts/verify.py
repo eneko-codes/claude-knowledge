@@ -43,13 +43,14 @@ log = logging.getLogger("verify")
 
 def parse_args():
     p = argparse.ArgumentParser(description="Verify generated plugin content against live source pages")
-    p.add_argument("plugin_dir", help="Path to the generated plugin directory")
+    p.add_argument("plugin_dir", help="Path to the generated plugin or skill directory")
     p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     p.add_argument(
         "--screenshot-dir",
         default="",
         help="If set, take screenshots of mismatched pages and save them here",
     )
+    p.add_argument("--skill-only", action="store_true", help="Verify a standalone skill directory (no plugin wrapper)")
     return p.parse_args()
 
 
@@ -313,10 +314,16 @@ def verify(args):
         sys.exit(1)
 
     # Find the skill directory
-    skill_dir = find_skill_dir(plugin_dir)
-    if skill_dir is None:
-        log.error(f"No skill directory found in {plugin_dir}")
-        sys.exit(1)
+    if args.skill_only:
+        skill_dir = plugin_dir
+        if not (skill_dir / "SKILL.md").exists():
+            log.error(f"No SKILL.md found in {skill_dir}")
+            sys.exit(1)
+    else:
+        skill_dir = find_skill_dir(plugin_dir)
+        if skill_dir is None:
+            log.error(f"No skill directory found in {plugin_dir}")
+            sys.exit(1)
 
     # Collect all content files
     content_files = collect_content_files(skill_dir)

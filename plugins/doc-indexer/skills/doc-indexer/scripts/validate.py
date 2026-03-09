@@ -39,8 +39,9 @@ log = logging.getLogger("validate")
 
 def parse_args():
     p = argparse.ArgumentParser(description="Validate generated documentation plugin")
-    p.add_argument("plugin_dir", help="Path to the generated plugin directory")
+    p.add_argument("plugin_dir", help="Path to the generated plugin or skill directory")
     p.add_argument("--sitemap", help="Path to original sitemap.json for cross-referencing")
+    p.add_argument("--skill-only", action="store_true", help="Validate a standalone skill directory (no plugin wrapper)")
     return p.parse_args()
 
 
@@ -436,21 +437,31 @@ def main():
     result = ValidationResult()
 
     # Step 1: Find the skill directory
-    skill_dir = find_skill_dir(plugin_dir)
-    if skill_dir is None:
-        log.error(f"No skill directory found in {plugin_dir}")
-        result.add_check("Skill directory exists", False)
-        print(result.report())
-        sys.exit(1)
-
-    result.add_check("Skill directory exists", True, str(skill_dir.name))
+    if args.skill_only:
+        # In skill-only mode, the directory IS the skill directory
+        skill_dir = plugin_dir
+        if not (skill_dir / "SKILL.md").exists():
+            log.error(f"No SKILL.md found in {skill_dir}")
+            result.add_check("Skill directory exists", False)
+            print(result.report())
+            sys.exit(1)
+        result.add_check("Skill directory exists", True, str(skill_dir.name))
+    else:
+        skill_dir = find_skill_dir(plugin_dir)
+        if skill_dir is None:
+            log.error(f"No skill directory found in {plugin_dir}")
+            result.add_check("Skill directory exists", False)
+            print(result.report())
+            sys.exit(1)
+        result.add_check("Skill directory exists", True, str(skill_dir.name))
 
     # Step 2: Collect all content files for subsequent checks
     md_files = collect_md_files(skill_dir)
     result.add_check("Content files found", len(md_files) > 0, f"{len(md_files)} markdown files")
 
     # Step 3: Run all validation checks
-    check_plugin_json(plugin_dir, result)          # Metadata integrity
+    if not args.skill_only:
+        check_plugin_json(plugin_dir, result)          # Metadata integrity
     skill_md_content = check_skill_md(skill_dir, result)  # SKILL.md structure
     check_page_count(sitemap, md_files, result)                  # Completeness
     check_section_coverage(sitemap, md_files, skill_dir, result) # Content fidelity

@@ -9,7 +9,7 @@ description: >
 
 # Doc Indexer
 
-Generate a complete documentation plugin by crawling an external documentation site.
+Generate a documentation skill by crawling an external documentation site. The generated skill is placed in a `.claude/skills/` directory where Claude Code auto-discovers it — no plugin registration needed.
 
 ## Prerequisites
 
@@ -34,7 +34,7 @@ Collect the following. The user may provide all of them upfront, some, or none �
 - **Documentation root URL** — the starting page to crawl (e.g., `https://docs.sqlc.dev/en/stable/`)
 - **Path prefix restriction** — whether to restrict crawling to the URL path prefix (default: yes)
 - **Version label** — documentation version if applicable (default: `latest`)
-- **Scope** — where to install the plugin (default: `user`)
+- **Scope** — where to save the generated skill (default: `user`)
 
 **If the user doesn't provide a URL** (e.g., "index go docs", "index laravel docs"), use web search to find the official documentation site. Search for `<library> official documentation site` and pick the official docs URL. Confirm with the user before proceeding:
 
@@ -47,12 +47,12 @@ Do not guess or fabricate URLs. Always search and confirm.
 
 **Versioning:** When the user specifies a version other than `latest`, the generated plugin includes the version in its name. For example, `laravel` version `11` produces plugin `laravel-11-docs` with skill `laravel-11-docs`. This allows multiple versions to coexist — the user can have `laravel-11-docs` and `laravel-12-docs` installed simultaneously. Always ask about version when the documentation URL contains a version indicator (e.g., `/v2/`, `/11.x/`, `/en/stable/`).
 
-**Scope:** The plugin can be installed at two scopes:
+**Scope:** The generated documentation skill can be saved at two scopes. Skills placed in `.claude/skills/` directories are auto-discovered by Claude Code — no plugin registration or installation is needed.
 
-| Scope       | Output directory                              | Who can use it |              Committed to git?              |
-| ----------- | --------------------------------------------- | -------------- | :-----------------------------------------: |
-| **project** | `<project-root>/.claude/plugins/<name>-docs/` | Whole team     | Yes — everyone on the project gets the docs |
-| **user**    | `~/.claude/plugins/<name>-docs/`              | Just you       |     No — available in all your projects     |
+| Scope       | Output directory                            | Who can use it |              Committed to git?              |
+| ----------- | ------------------------------------------- | -------------- | :-----------------------------------------: |
+| **project** | `<project-root>/.claude/skills/<name>-docs/` | Whole team     | Yes — everyone on the project gets the docs |
+| **user**    | `~/.claude/skills/<name>-docs/`              | Just you       |     No — available in all your projects     |
 
 Recommend **project** scope when the docs are relevant to the current project (e.g., the framework the project uses). This way the whole team benefits. Recommend **user** scope for general-purpose libraries the user works with across multiple projects.
 
@@ -178,9 +178,9 @@ The user can review skipped pages and override if needed. Only proceed when the 
 
 **4e. Delete skipped JSON files** from `/tmp/<library>-extracted/` so `build_plugin.py` only processes the kept pages.
 
-### Step 5: Build the Plugin
+### Step 5: Build the Skill
 
-Generate the complete plugin from the filtered content. The `--output-dir` depends on the scope chosen in Step 1:
+Generate the documentation skill from the filtered content. Use `--skill-only` to output just the skill directory (SKILL.md + pages/) without a plugin wrapper. The `--output-dir` depends on the scope chosen in Step 1:
 
 **Project scope:**
 
@@ -188,7 +188,8 @@ Generate the complete plugin from the filtered content. The `--output-dir` depen
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
   --version <version-label> \
-  --output-dir <project-root>/.claude/plugins/<name>-docs
+  --skill-only \
+  --output-dir <project-root>/.claude/skills/<name>-docs
 ```
 
 **User scope:**
@@ -197,31 +198,31 @@ python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
   --version <version-label> \
-  --output-dir ~/.claude/plugins/<name>-docs
+  --skill-only \
+  --output-dir ~/.claude/skills/<name>-docs
 ```
 
-Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or `react-docs`).
+Replace `<name>-docs` with the versioned name (e.g., `laravel-11-docs` or `react-docs`).
 
 **Verify output:**
 
-- Check the generated directory structure has: `.claude-plugin/plugin.json`, `skills/<name>-docs/SKILL.md`, `skills/<name>-docs/pages/` with content files
+- Check the generated directory structure has: `SKILL.md` and `pages/` with content files
 - Open the generated `SKILL.md` — confirm it lists every sub-file with H2 sub-topic descriptions
 - If re-running after a partial extraction, extract.py automatically skips already-extracted pages (use `--force` to re-extract all)
 - Spot-check a few sub-files for content completeness
 
 ### Step 6: Validate Structure
 
-Run the validator to check the plugin's structural integrity:
+Run the validator to check the skill's structural integrity:
 
 ```bash
-python3 validate.py <output-dir>
+python3 validate.py <output-dir> --skill-only
 ```
 
 Do NOT pass `--sitemap` here. The original sitemap contains all crawled pages, but we intentionally filtered pages in Step 4. Passing the sitemap would cause the page count check to fail.
 
 Without `--sitemap`, the validator checks:
 
-- plugin.json exists with required fields
 - SKILL.md has frontmatter and substantial content
 - All file paths in SKILL.md resolve to existing files
 - No empty content files
@@ -238,7 +239,7 @@ If validation fails, fix the identified gaps and re-validate.
 Run the accuracy verifier to compare EVERY generated file against its live source page:
 
 ```bash
-python3 verify.py <output-dir> --screenshot-dir /tmp/<library>-screenshots
+python3 verify.py <output-dir> --skill-only --screenshot-dir /tmp/<library>-screenshots
 ```
 
 This re-visits the original URL of every content file and compares key signals:
@@ -270,27 +271,18 @@ Options:
 
 Do not proceed to Step 7 until all mismatches are resolved or accepted by the user.
 
-### Step 7: Install and Finalize
+### Step 7: Finalize
 
-After building and validating, register the plugin by adding it to the appropriate settings.json file. You cannot use `claude /plugin install` from inside a Claude Code session (nested sessions are not allowed), so you must edit the settings file directly.
-
-**User scope** — add to `~/.claude/settings.json`:
-
-Read the file, then add `"<name>-docs": true` to the `enabledPlugins` object. If `enabledPlugins` doesn't exist, create it.
-
-**Project scope** — add to `<project-root>/.claude/settings.json`:
-
-Read the file (create it if it doesn't exist), then add `"<name>-docs": true` to the `enabledPlugins` object. The plugin directory at `<project-root>/.claude/plugins/<name>-docs/` should be committed to git so teammates get it automatically.
-
-**Important:** If the project has a project-level settings.json that sets other plugins to `false`, the new plugin must be explicitly set to `true` there as well, or it will be implicitly disabled.
+The generated skill is auto-discovered by Claude Code from its `.claude/skills/` directory — no registration or installation is needed. The user just needs to restart their Claude Code session.
 
 Report the final results to the user:
 
 - Total pages indexed (after filtering)
 - Pages skipped and why
-- Plugin name (including version if applicable)
-- Plugin directory location
+- Skill name (including version if applicable)
+- Skill directory location
 - Scope and what that means for visibility
+- Remind the user to restart Claude Code for the skill to be available
 
 **Clean up temporary files** after the user confirms everything looks good:
 
@@ -330,9 +322,9 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 | ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
 | `extract.py`      | Convert saved HTML to structured markdown    | `<sitemap.json>` `--output` `--force` `--guess-languages`                    |
-| `build_plugin.py` | Assemble plugin from extracted content       | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
-| `validate.py`     | Verify plugin structural integrity           | `<plugin-dir>`                                                               |
-| `verify.py`       | Compare generated content against live pages | `<plugin-dir>` `--delay` `--screenshot-dir`                                  |
+| `build_plugin.py` | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` `--skill-only` |
+| `validate.py`     | Verify skill structural integrity            | `<skill-dir>` `--skill-only`                                                 |
+| `verify.py`       | Compare generated content against live pages | `<skill-dir>` `--skill-only` `--delay` `--screenshot-dir`                    |
 | `setup.sh`        | Create venv and install dependencies         | (none)                                                                       |
 
 Templates are in `{PLUGIN_ROOT}/templates/`:
