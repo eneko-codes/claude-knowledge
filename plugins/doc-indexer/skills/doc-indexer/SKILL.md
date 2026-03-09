@@ -307,6 +307,25 @@ rm -rf /tmp/<library>-screenshots/
 
 Do not clean up until the user has confirmed the plugin is working. They may want to re-extract or re-verify.
 
+After cleaning temp files, ask the user if they also want to reclaim disk space by removing the Python virtual environment (~50MB) and the Chromium browser binary (~200MB). Explain that these are only needed by doc-indexer, and if deleted, `setup.sh` must be re-run before indexing docs again:
+
+```
+The doc-indexer environment takes ~250MB of disk space:
+- Python venv: {PLUGIN_ROOT}/scripts/.venv/ (~50MB)
+- Chromium browser: ~/.cache/ms-playwright/ (~200MB)
+
+These are only used when indexing new documentation. Want me to delete them
+to reclaim disk space? You'll need to re-run setup.sh if you index docs again
+in the future. (yes/no)
+```
+
+If yes:
+
+```bash
+rm -rf {PLUGIN_ROOT}/scripts/.venv/
+rm -rf ~/.cache/ms-playwright/
+```
+
 ## Script Reference
 
 All scripts are in `{PLUGIN_ROOT}/scripts/`:
