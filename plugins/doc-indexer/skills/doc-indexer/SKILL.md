@@ -56,10 +56,12 @@ Do not guess or fabricate URLs. Always search and confirm.
 
 Recommend **project** scope when the docs are relevant to the current project (e.g., the framework the project uses). This way the whole team benefits. Recommend **user** scope for general-purpose libraries the user works with across multiple projects.
 
-**Validate the target directory before proceeding:**
+**Confirm the output directory with the user before proceeding. Always ask — never assume.**
 
-- **Project scope:** Check that the current working directory has a `.claude/` directory. If it doesn't, ask the user: _"The current directory doesn't have a .claude/ directory. Where should I save the skill? Please provide the project root path, or switch to user scope."_
-- **User scope:** Check that `~/.claude/` exists. If it doesn't, ask the user: _"~/.claude/ doesn't exist — this usually means Claude Code hasn't been configured yet. Should I create it, or do you want to specify a different path?"_
+- **Project scope:** Show the user the resolved path (e.g., `/Users/name/myproject/.claude/skills/react-docs/`) and ask them to confirm it is correct.
+- **User scope:** Show the user the resolved path (e.g., `/Users/name/.claude/skills/react-docs/`) and ask them to confirm it is correct.
+
+Do not proceed until the user explicitly confirms the directory.
 
 ### Step 2: Crawl Documentation Pages
 
