@@ -261,11 +261,11 @@ playwright install chromium
 
 ```
 crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  build_plugin.py  ──>  validate.py  ──>  verify.py
- (URLs)        (markdown)       (user picks topics,                (plugin files)       (structure)       (accuracy)
-                                 noise removed)
+(URLs + HTML)   (markdown)       (user picks topics,                (plugin files)       (structure)       (accuracy)
+                                  noise removed)
 ```
 
-**`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL. Outputs `sitemap.json` with titles, headings, and status for every page.
+**`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL, cleans code blocks via computed-style JS injection, and saves the HTML to disk. Each page is visited only once — extract.py reuses the saved HTML.
 
 **`extract.py`** — Reads saved HTML from crawl, finds the main content area via CSS selector heuristics, strips noise, converts to markdown. No browser needed — works fully offline. Resumable — skips already-extracted pages on re-run.
 
