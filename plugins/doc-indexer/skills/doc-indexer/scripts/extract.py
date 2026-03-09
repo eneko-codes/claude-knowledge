@@ -585,20 +585,6 @@ def main():
                 with open(output_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
 
-                # Take a viewport screenshot (1280x800) for verification.
-                # Saved alongside the JSON with the same name stem but .png extension.
-                # These are used during the spot-check step to visually compare
-                # the extracted markdown against what the page actually looks like.
-                # Viewport-only (not full_page) keeps files small (~100-200KB)
-                # while capturing the page title, headings, and first code block
-                # — enough to verify extraction accuracy.
-                screenshot_filename = filename.rsplit(".", 1)[0] + ".png"
-                screenshot_path = os.path.join(args.output, screenshot_filename)
-                try:
-                    page.screenshot(path=screenshot_path)
-                except Exception as e:
-                    log.warning(f"  Screenshot failed: {e}")
-
                 fallback_note = " [FALLBACK]" if data.get("used_fallback_selector") else ""
                 log.info(f"  -> {cat} | {len(data['markdown'])} chars | {len(data['code_blocks'])} code blocks | {len(data['signatures'])} signatures{fallback_note}")
 

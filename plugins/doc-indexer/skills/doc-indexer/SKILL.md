@@ -220,23 +220,40 @@ Without `--sitemap`, the validator checks:
 
 If validation fails, fix the identified gaps and re-validate.
 
-### Step 6b: Spot-Check Accuracy Against Screenshots
+### Step 6b: Verify Accuracy Against Live Pages
 
-The extractor saves a viewport screenshot (`.png`) alongside each extracted JSON file. These screenshots show exactly what the page looks like in a browser — they are the ground truth.
+Run the accuracy verifier to compare EVERY generated file against its live source page:
 
-After validation passes, spot-check 3-5 generated files:
+```bash
+python3 verify.py <output-dir> --delay 1.0 --screenshot-dir /tmp/<library>-screenshots
+```
 
-1. Pick 3-5 files from different categories (one from `api/`, one from `concepts/`, etc.)
-2. Read the generated markdown file from the plugin output
-3. View the corresponding screenshot from `/tmp/<library>-extracted/` (same filename stem, `.png` extension) using the Read tool
-4. Compare them:
-   - Does the markdown title match the title visible in the screenshot?
-   - Are the main headings present in both?
-   - If a code block is visible in the screenshot, does it appear in the markdown?
-   - Does the markdown contain navigation/sidebar text that shouldn't be there?
-5. If any file doesn't match its screenshot — flag it to the user: *"The extracted markdown for [page] doesn't match the screenshot. [describe the difference]. Keep, skip, or re-extract?"*
+This re-visits the original URL of every content file and compares key signals:
+- **Title match** — does the markdown title match the live page's H1?
+- **Heading count** — does the markdown have at least 50% of the live page's headings?
+- **Code block count** — does the markdown have at least 50% of the live page's code blocks?
+- **Content length** — is the markdown at least 30% the length of the live page content?
 
-This is a sanity check, not a full audit. The goal is to catch obvious extraction failures before the user starts relying on the plugin. Screenshots are discarded after verification — they don't ship in the plugin.
+When `--screenshot-dir` is provided, mismatched pages get a screenshot saved automatically. Use the Read tool to view screenshots of mismatched pages — this shows what the page actually looks like versus what was extracted.
+
+**Interpret results:**
+- Exit code 0 = all files verified
+- Exit code 1 = mismatches found — review the report
+
+For each mismatch, present it to the user:
+
+```
+Mismatch in api/configuration.md:
+- Code blocks: markdown has 1 but live page has 3 (33% captured)
+- Screenshot saved at /tmp/sqlc-screenshots/api_configuration.md.png
+
+Options:
+1. Keep as-is (partial content is still useful)
+2. Skip this page (remove from plugin)
+3. Re-extract this specific page
+```
+
+Do not proceed to Step 7 until all mismatches are resolved or accepted by the user.
 
 ### Step 7: Install and Finalize
 
@@ -269,7 +286,8 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 | `crawl.py` | Discover all doc pages via BFS crawl | `<root-url>` `--output` `--max-depth` `--delay` `--same-path-prefix` |
 | `extract.py` | Fetch and convert page content to markdown | `<sitemap.json>` `--output` `--delay` |
 | `build_plugin.py` | Assemble plugin from extracted content | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
-| `validate.py` | Verify plugin completeness | `<plugin-dir>` `--sitemap` |
+| `validate.py` | Verify plugin structural integrity | `<plugin-dir>` |
+| `verify.py` | Compare generated content against live pages | `<plugin-dir>` `--delay` `--screenshot-dir` |
 | `setup.sh` | Create venv and install dependencies | (none) |
 
 Templates are in `{PLUGIN_ROOT}/templates/`:

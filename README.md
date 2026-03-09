@@ -108,7 +108,7 @@ Claude runs a 7-step pipeline:
 4. **You choose** — you pick which topics to include from a numbered list
 5. **Filter** — Claude reviews each page and removes noise (blog posts, archive listings, empty pages). You approve the final list before proceeding
 6. **Build** — assembles the filtered content into a hierarchical plugin with an index
-7. **Validate** — checks structural integrity and spot-checks extracted markdown against page screenshots for accuracy
+7. **Validate** — checks structural integrity, then re-visits every source page and compares against the generated markdown (title, headings, code blocks, content length). Mismatches are flagged with screenshots.
 
 Example interaction for a large library:
 
@@ -212,8 +212,8 @@ playwright install chromium
 <br>
 
 ```
-crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  build_plugin.py  ──>  validate.py
- (URLs)        (markdown)       (user picks topics,                (plugin files)       (coverage report)
+crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  build_plugin.py  ──>  validate.py  ──>  verify.py
+ (URLs)        (markdown)       (user picks topics,                (plugin files)       (structure)       (accuracy)
                                  noise removed)
 ```
 
