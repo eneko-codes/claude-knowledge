@@ -2,12 +2,12 @@
 
 # knowledge
 
-**Pre-built documentation plugins for Claude Code.**
+**Index any documentation locally and use it as a Claude Code skill.**
 
 Each plugin is a skill with an index — Claude sees every available page
 and navigates directly to the right file. No searching, no guessing.
 
-No extra API calls. No latency. No setup.
+No extra API calls. No latency. Pre-built docs ready to install, or index your own in minutes.
 
 [Available Docs](#available-documentation) ·
 [Install](#installation) ·
@@ -23,13 +23,9 @@ No extra API calls. No latency. No setup.
 
 | Plugin | Library | Pages |
 |:-------|:--------|------:|
-| `goose-docs` | [Goose](https://pressly.github.io/goose/) — Go database migrations | 29 |
+| *coming soon* | Laravel, React, Go | — |
 
-```bash
-claude /plugin install goose-docs@knowledge
-```
-
-> **Don't see your library?** [Request it](https://github.com/eneko-codes/knowledge/issues/new?template=doc-request.yml) — no setup needed, just fill out the form.
+> **Don't see your library?** [Request it](https://github.com/eneko-codes/knowledge/issues/new?template=doc-request.yml) — no setup needed, just fill out the form. Or [index your own](#index-your-own-docs) in minutes.
 
 ---
 
@@ -44,18 +40,29 @@ claude /plugin marketplace add https://github.com/eneko-codes/knowledge
 **2. Install a docs plugin**
 
 ```bash
-claude /plugin install goose-docs@knowledge
+claude /plugin install react-docs@knowledge
 ```
 
 **3. Ask Claude**
 
 ```
-How do I use goose migrations with PostgreSQL?
-What CLI commands does goose support?
-Show me how to embed SQL migrations in Go
+How do React Server Components work?
+What hooks are available for managing state?
+Show me how to use Suspense for data fetching
 ```
 
 That's it. Claude reads the docs from local files — instant answers, no extra network calls.
+
+> [!TIP]
+> **Add a CLAUDE.md instruction so Claude always uses the docs skill.**
+>
+> Whether you installed a pre-built plugin or generated one with `doc-indexer`, add a line to your project's `CLAUDE.md` telling Claude to use it:
+>
+> ```markdown
+> When working with React, use the react-docs skill to look up documentation.
+> ```
+>
+> Without this, Claude may rely on training data instead of the indexed docs. The instruction ensures Claude reaches for the skill first — giving you accurate, version-specific answers every time.
 
 ### Versioned documentation
 

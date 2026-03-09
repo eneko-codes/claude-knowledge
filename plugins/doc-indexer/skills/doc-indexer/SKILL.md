@@ -197,7 +197,7 @@ python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --output-dir ~/.claude/plugins/<name>-docs
 ```
 
-Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or `goose-docs`).
+Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or `react-docs`).
 
 **Verify output:**
 

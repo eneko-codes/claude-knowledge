@@ -46,7 +46,7 @@ PAGES_DIR = "pages"
 
 def parse_args():
     p = argparse.ArgumentParser(description="Build documentation plugin from extracted content")
-    p.add_argument("library_name", help="Library identifier (e.g., sqlc, goose, htmx)")
+    p.add_argument("library_name", help="Library identifier (e.g., react, laravel, htmx)")
     p.add_argument("extracted_dir", help="Directory containing extracted JSON files")
     p.add_argument("--version", default="latest", help="Documentation version label (default: latest)")
     p.add_argument("--source-url", default="", help="Original documentation URL")
