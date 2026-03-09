@@ -478,6 +478,14 @@ def extract_page(page_obj, url, converter):
     # lxml is faster than html.parser and more lenient with malformed HTML
     soup = BeautifulSoup(html, "lxml")
 
+    # Step 0: Expand hidden content before extraction.
+    # Many doc sites use <details>/<summary> for collapsible sections and JS tabs
+    # (e.g., Pest/PHPUnit on Laravel). We need to make this content visible so
+    # BeautifulSoup can see it and html2text can convert it.
+    # Open all <details> elements by adding the "open" attribute.
+    for details in soup.find_all("details"):
+        details["open"] = ""
+
     # Step 1: Find the content area and extract code blocks FIRST.
     # Code blocks must be extracted before strip_noise() because some nav elements
     # (like "copy to clipboard" buttons) are siblings of code blocks.
@@ -485,6 +493,17 @@ def extract_page(page_obj, url, converter):
     # which may include navigation/sidebar noise — flagged in the output JSON.
     content_el, used_fallback = find_main_content(soup)
     code_blocks = extract_code_blocks(content_el)
+
+    # Step 1b: Clean code_blocks content — strip line-numbered duplicates.
+    # Many sites (e.g., Laravel) render code with both a line-numbered version
+    # and a plain version. The raw content has both concatenated with a \n separator.
+    # We keep only the clean version (after the first \n) for signature extraction
+    # and the Quick Reference section.
+    for cb in code_blocks:
+        content = cb["content"]
+        first_nl = content.find("\n")
+        if first_nl >= 0:
+            cb["content"] = content[first_nl + 1:]
 
     # Step 2: Remove navigation, sidebars, footers, etc. from the content area
     content_el = strip_noise(content_el)
@@ -520,6 +539,13 @@ def extract_page(page_obj, url, converter):
             clean = clean.rstrip()
             fence = f"```{lang}\n{clean}\n```"
             markdown = markdown[:match.start()] + fence + markdown[match.end():]
+
+    # Step 3c: Clean internal documentation links.
+    # Doc sites often have internal links like [Container](/docs/12.x/container) or
+    # [Container](</docs/12.x/container>). These absolute paths are meaningless in
+    # the generated plugin. Convert them to just the link text (strip the URL).
+    # Pattern matches markdown links where the URL starts with / or </ (internal paths).
+    markdown = re.sub(r'\[([^\]]+)\]\(<{0,1}/[^)>]+>{0,1}\)', r'\1', markdown)
 
     # Clean up: collapse runs of 4+ blank lines to 3 (keeps readability without waste)
     markdown = re.sub(r"\n{4,}", "\n\n\n", markdown)
@@ -607,14 +633,22 @@ def main():
             log.info(f"[{i+1}/{len(pages)}] {url}")
 
             try:
-                response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                # Wait for network to go idle (no requests for 500ms) instead of a
-                # fixed timeout. Adapts to each page — static pages finish fast,
-                # JS-heavy SPAs get time to hydrate. 5s cap for pages with perpetual polling.
-                try:
-                    page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass
+                # Navigate with retry logic for transient failures.
+                response = None
+                for attempt in range(3):
+                    try:
+                        response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=5000)
+                        except Exception:
+                            pass
+                        break
+                    except Exception as nav_err:
+                        if attempt < 2:
+                            log.warning(f"  Attempt {attempt+1} failed: {nav_err}. Retrying...")
+                            time.sleep(2 * (attempt + 1))
+                        else:
+                            raise
 
                 if response and response.status >= 400:
                     log.warning(f"HTTP {response.status} for {url}, skipping")

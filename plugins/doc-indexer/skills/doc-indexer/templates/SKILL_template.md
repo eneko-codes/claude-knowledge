@@ -27,14 +27,15 @@ Complete reference for {library_name_title}, extracted from the official documen
 
 1. Start with `index/SITEMAP.md` for an overview of all available pages.
 2. Navigate to the relevant directory based on what you need:
-   - `api/` for function signatures, type definitions, and parameter details
-   - `concepts/` for explanations, guides, and tutorials
-   - `examples/` for code examples and sample usage
-   - `warnings/` for deprecation notices and breaking changes
+   - `reference/` for API signatures, type definitions, configuration parameters
+   - `concepts/` for architecture, design, and how-things-work explanations
+   - `guides/` for step-by-step tutorials, how-to procedures
+   - `examples/` for code samples, recipes, and cookbooks
+   - `troubleshooting/` for deprecation notices, error explanations, debugging
 3. Read the specific sub-file for detailed content.
 
 ## Important
 
 - All content is extracted verbatim from the official documentation.
-- Code blocks are preserved exactly as they appear in the source.
+- Code blocks are preserved exactly as they appear in the source, with language annotations.
 - If content seems outdated, re-run the doc-indexer to refresh.

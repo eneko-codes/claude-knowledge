@@ -286,18 +286,23 @@ def crawl(args):
             log.info(f"[{len(pages)+1}/{len(visited)}] depth={depth} {url}")
 
             try:
-                # Navigate to the page. wait_until="domcontentloaded" fires when the
-                # HTML is parsed. 30s timeout handles slow pages without hanging.
-                response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
-
-                # Wait for network to go idle (no requests for 500ms) instead of a
-                # fixed timeout. This adapts to each page: static pages finish in
-                # ~200ms, JS-heavy SPAs get the time they need to hydrate.
-                # Falls back gracefully if networkidle never fires (timeout after 5s).
-                try:
-                    page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass  # Timeout is fine — some pages have perpetual polling
+                # Navigate with retry logic for transient failures.
+                # Retries up to 2 times (3 total attempts) with increasing delay.
+                response = None
+                for attempt in range(3):
+                    try:
+                        response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=5000)
+                        except Exception:
+                            pass
+                        break  # Success — exit retry loop
+                    except Exception as nav_err:
+                        if attempt < 2:
+                            log.warning(f"  Attempt {attempt+1} failed: {nav_err}. Retrying...")
+                            time.sleep(2 * (attempt + 1))
+                        else:
+                            raise  # Final attempt — let the outer handler catch it
 
                 status = response.status if response else 0
 

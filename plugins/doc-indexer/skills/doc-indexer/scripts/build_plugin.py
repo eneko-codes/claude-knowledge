@@ -43,15 +43,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = SCRIPT_DIR.parent / "templates"
 
 # Maps extract.py's page categories to output directory names.
-# "tutorial" merges into "concepts" because tutorials are conceptual in nature —
-# they explain how things work through guided examples, unlike pure "example"
-# pages which are mostly code with minimal prose.
+# 6-category system designed to cover different documentation ecosystems:
+# frameworks (Laravel), APIs (Stripe), UI libraries (React), infrastructure (K8s).
 CATEGORY_DIRS = {
-    "api-reference": "api",        # Function signatures, type definitions, parameters
-    "conceptual": "concepts",      # Overviews, architecture, design explanations
-    "tutorial": "concepts",        # Step-by-step guides (merged with conceptual)
-    "example": "examples",         # Code-heavy pages with minimal prose
-    "warning": "warnings",         # Deprecation notices, breaking changes
+    "api-reference": "reference",       # Function signatures, type definitions, config params
+    "conceptual": "concepts",           # Architecture, design, how-things-work explanations
+    "tutorial": "guides",               # Step-by-step procedures, tutorials, how-to
+    "example": "examples",              # Code samples, recipes, cookbooks
+    "warning": "troubleshooting",       # Deprecation notices, breaking changes, error guides
 }
 
 
@@ -389,9 +388,28 @@ def build_plugin(args):
         # Every category gets one markdown file per extracted page — including
         # warnings. Previously warnings were consolidated into a single WARNINGS.md
         # but this produced unreadably large files (386KB+) and broke SITEMAP links.
+        # Track filenames within this directory to detect collisions.
+        # Case-insensitive comparison because macOS/Windows filesystems are
+        # case-insensitive — "Config.md" and "config.md" would overwrite.
+        used_filenames = {}
+
         for page in cat_pages:
             title = page.get("title", "Untitled")
             filename = sanitize_filename(title) + ".md"
+
+            # Detect filename collisions — if two pages produce the same
+            # filename (e.g., "Installation" from two different URLs),
+            # append a numeric suffix to disambiguate.
+            if filename.lower() in used_filenames:
+                base = sanitize_filename(title)
+                counter = 2
+                while f"{base}-{counter}.md".lower() in used_filenames:
+                    counter += 1
+                filename = f"{base}-{counter}.md"
+                log.warning(f"  Filename collision: '{title}' → {filename}")
+
+            used_filenames[filename.lower()] = True
+
             filepath = content_dir / filename
             content = generate_section_file(page, library)
             filepath.write_text(content, encoding="utf-8")
