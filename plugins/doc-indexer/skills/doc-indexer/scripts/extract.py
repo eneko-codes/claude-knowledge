@@ -107,6 +107,8 @@ STRIP_SELECTORS = [
     ".tabs",                 # Tab navigation bar (Pest/PHPUnit code tabs)
     ".tab-list",             # Alternative tab list class
     "[role='tablist']",      # ARIA role for tab navigation lists
+    ".line-number",          # Torchlight/syntax highlighter line numbers
+    ".torchlight-copy-target",  # Torchlight duplicate plain-text copy target
 ]
 
 
