@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Plugin generator — assembles extracted content into a complete documentation plugin.
+"""Skill generator — assembles extracted content into a documentation skill.
 
-Takes the per-page JSON files from extract.py and assembles them into a complete
-Claude Code documentation plugin with the standard directory structure:
+Takes the per-page JSON files from extract.py and assembles them into a
+Claude Code documentation skill:
 
-    plugins/docs-<library>/
-    ├── .claude-plugin/plugin.json        # Plugin metadata
-    └── skills/<library>-docs/
-        ├── SKILL.md                      # Index file Claude reads first
-        └── pages/                        # All documentation pages (flat)
+    <name>-docs/
+    ├── SKILL.md          # Index file Claude reads first
+    └── pages/            # All documentation pages (flat)
 
 The generated SKILL.md is the entry point for Claude — it lists every sub-file
 so Claude can navigate to the relevant section based on the user's question.
@@ -45,20 +43,15 @@ PAGES_DIR = "pages"
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Build documentation plugin from extracted content")
+    p = argparse.ArgumentParser(description="Build documentation skill from extracted content")
     p.add_argument("library_name", help="Library identifier (e.g., react, laravel, htmx)")
     p.add_argument("extracted_dir", help="Directory containing extracted JSON files")
     p.add_argument("--version", default="latest", help="Documentation version label (default: latest)")
     p.add_argument("--source-url", default="", help="Original documentation URL")
     p.add_argument(
         "--output-dir",
-        default="",
-        help="Output directory (default: ../../plugins/docs-<library> relative to scripts/)",
-    )
-    p.add_argument(
-        "--skill-only",
-        action="store_true",
-        help="Output just the skill directory (SKILL.md + pages/) without plugin wrapper",
+        required=True,
+        help="Output directory for the skill (e.g., ~/.claude/skills/react-docs)",
     )
     return p.parse_args()
 
@@ -71,7 +64,7 @@ def load_extracted(extracted_dir):
     """Load all extracted JSON files from the directory.
 
     Files are sorted alphabetically for deterministic output — the same input
-    always produces the same plugin structure, making diffs meaningful.
+    always produces the same skill structure, making diffs meaningful.
     """
     pages = []
     for filename in sorted(os.listdir(extracted_dir)):
@@ -160,15 +153,14 @@ def generate_section_file(page, library_name, template=None):
 
 
 
-def generate_skill_md(library_name, versioned_library, plugin_name, pages, source_url, version, file_listing):
-    """Generate the SKILL.md index file for the documentation plugin.
+def generate_skill_md(library_name, versioned_library, skill_name, pages, source_url, version, file_listing):
+    """Generate the SKILL.md index file for the documentation skill.
 
-    SKILL.md is the most important file in the plugin — it's what Claude reads
-    first when the skill is activated. It contains:
+    SKILL.md is the most important file — it's what Claude reads first when
+    the skill is activated. It contains:
     - Frontmatter with trigger phrases for skill activation (version-aware)
     - Source URL and version metadata
     - Directory structure overview
-    - Quick reference for the most common API functions
     - Complete file listing so Claude knows where to find every piece of content
     """
     template = load_template("SKILL_template.md")
@@ -194,7 +186,7 @@ def generate_skill_md(library_name, versioned_library, plugin_name, pages, sourc
         template,
         library_name=library_name,
         versioned_library=versioned_library,
-        plugin_name=plugin_name,
+        plugin_name=skill_name,
         library_name_title=library_name.replace("-", " ").title(),
         version=version,
         version_triggers=version_triggers,
@@ -206,38 +198,18 @@ def generate_skill_md(library_name, versioned_library, plugin_name, pages, sourc
     )
 
 
-def generate_plugin_json(plugin_name, library_name, version, source_url):
-    """Generate .claude-plugin/plugin.json for the documentation plugin.
-
-    This is the plugin metadata file that Claude Code reads to identify and
-    load the plugin. It must contain name, description, version, and author.
-    Uses plugin_name (version-aware) for the "name" field so versioned plugins
-    have distinct identities (e.g., "laravel-11-docs" vs "laravel-12-docs").
-    """
-    template = load_template("plugin_json_template.json")
-    return render_template(
-        template,
-        plugin_name=plugin_name,
-        library_name=library_name,
-        library_name_title=library_name.replace("-", " ").title(),
-        version=version,
-        source_url=source_url,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Main build pipeline
 # ---------------------------------------------------------------------------
 
-def build_plugin(args):
-    """Orchestrate the full plugin build from extracted content.
+def build_skill(args):
+    """Orchestrate the full skill build from extracted content.
 
     Pipeline:
     1. Load all extracted JSON files
-    2. Create plugin directory structure
+    2. Create skill directory structure
     3. Generate content sub-files (one .md per page in pages/)
     4. Generate SKILL.md (entry point with file index and sub-topic descriptions)
-    5. Generate plugin.json (metadata)
     """
     library = args.library_name
     extracted_dir = args.extracted_dir
@@ -246,24 +218,18 @@ def build_plugin(args):
 
     # Version-aware naming: when version is not "latest", insert it between
     # the library name and the "-docs" suffix so multiple versions can coexist.
-    # e.g., "laravel" + "11" → plugin "laravel-11-docs", skill "laravel-11-docs"
-    # e.g., "laravel" + "latest" → plugin "laravel-docs", skill "laravel-docs"
-    # This groups versions alphabetically (laravel-11-docs, laravel-12-docs).
+    # e.g., "laravel" + "11" → "laravel-11-docs"
+    # e.g., "laravel" + "latest" → "laravel-docs"
     if version and version != "latest":
-        plugin_name = f"{library}-{version}-docs"
+        skill_name = f"{library}-{version}-docs"
         versioned_library = f"{library}-{version}"
     else:
-        plugin_name = f"{library}-docs"
+        skill_name = f"{library}-docs"
         versioned_library = library
 
-    # Default output location: alongside other plugins in the monorepo.
-    # scripts/ → doc-indexer skill → doc-indexer plugin → plugins/ → docs-<lib>/
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-    else:
-        output_dir = SCRIPT_DIR.parent.parent.parent.parent / plugin_name
+    output_dir = Path(args.output_dir)
 
-    log.info(f"Building plugin '{plugin_name}' v{version}")
+    log.info(f"Building skill '{skill_name}' v{version}")
     log.info(f"Reading from: {extracted_dir}")
     log.info(f"Writing to: {output_dir}")
 
@@ -275,20 +241,8 @@ def build_plugin(args):
 
     log.info(f"Loaded {len(pages)} pages")
 
-    log.info(f"  Total: {len(pages)} pages (flat structure)")
-
-    # Set up the directory structure.
-    # In skill-only mode, output_dir IS the skill directory (SKILL.md + pages/).
-    # In plugin mode, output_dir contains the full plugin structure.
-    skill_name = f"{versioned_library}-docs"
-
-    if args.skill_only:
-        skill_dir = output_dir
-        plugin_meta_dir = None
-    else:
-        skill_dir = output_dir / "skills" / skill_name
-        plugin_meta_dir = output_dir / ".claude-plugin"
-        plugin_meta_dir.mkdir(parents=True, exist_ok=True)
+    # output_dir IS the skill directory (SKILL.md + pages/)
+    skill_dir = output_dir
 
     # Track all generated files for the SKILL.md file listing
     file_listing_lines = []
@@ -340,32 +294,21 @@ def build_plugin(args):
     # Generate SKILL.md — the entry point Claude reads when the skill activates.
     # The file listing is sorted alphabetically for consistent, scannable output.
     file_listing = "\n".join(sorted(file_listing_lines))
-    skill_content = generate_skill_md(library, versioned_library, plugin_name, pages, source_url, version, file_listing)
+    skill_content = generate_skill_md(library, versioned_library, skill_name, pages, source_url, version, file_listing)
     skill_path = skill_dir / "SKILL.md"
     skill_path.write_text(skill_content, encoding="utf-8")
     log.info(f"Wrote {skill_path}")
 
-    # Generate plugin.json metadata (skip in skill-only mode)
-    if plugin_meta_dir is not None:
-        plugin_json_content = generate_plugin_json(plugin_name, library, version, source_url)
-        plugin_json_path = plugin_meta_dir / "plugin.json"
-        plugin_json_path.write_text(plugin_json_content, encoding="utf-8")
-        log.info(f"Wrote {plugin_json_path}")
-
     # Final summary
     log.info("=" * 60)
-    if args.skill_only:
-        log.info(f"Skill built successfully: {output_dir}")
-        log.info(f"Total files: {len(written_files) + 1} (content + SKILL.md)")
-    else:
-        log.info(f"Plugin built successfully: {output_dir}")
-        log.info(f"Total files: {len(written_files) + 2} (content + SKILL + plugin.json)")
+    log.info(f"Skill built successfully: {output_dir}")
+    log.info(f"Total files: {len(written_files) + 1} (content + SKILL.md)")
     log.info(f"Skill name: {skill_name}")
 
 
 def main():
     args = parse_args()
-    build_plugin(args)
+    build_skill(args)
 
 
 if __name__ == "__main__":

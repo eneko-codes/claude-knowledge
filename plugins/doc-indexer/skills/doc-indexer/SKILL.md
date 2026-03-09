@@ -56,6 +56,11 @@ Do not guess or fabricate URLs. Always search and confirm.
 
 Recommend **project** scope when the docs are relevant to the current project (e.g., the framework the project uses). This way the whole team benefits. Recommend **user** scope for general-purpose libraries the user works with across multiple projects.
 
+**Validate the target directory before proceeding:**
+
+- **Project scope:** Check that the current working directory is a git repository or has a `.claude/` directory. If neither exists, ask the user: _"The current directory doesn't appear to be a project root (no .git or .claude directory). Where should I save the skill? Please provide the project root path, or switch to user scope."_
+- **User scope:** Check that `~/.claude/` exists. If it doesn't, ask the user: _"~/.claude/ doesn't exist — this usually means Claude Code hasn't been configured yet. Should I create it, or do you want to specify a different path?"_
+
 ### Step 2: Crawl Documentation Pages
 
 Run the crawler to discover all documentation pages:
@@ -180,7 +185,7 @@ The user can review skipped pages and override if needed. Only proceed when the 
 
 ### Step 5: Build the Skill
 
-Generate the documentation skill from the filtered content. Use `--skill-only` to output just the skill directory (SKILL.md + pages/) without a plugin wrapper. The `--output-dir` depends on the scope chosen in Step 1:
+Generate the documentation skill from the filtered content. The `--output-dir` depends on the scope chosen in Step 1.
 
 **Project scope:**
 
@@ -188,7 +193,6 @@ Generate the documentation skill from the filtered content. Use `--skill-only` t
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
   --version <version-label> \
-  --skill-only \
   --output-dir <project-root>/.claude/skills/<name>-docs
 ```
 
@@ -198,7 +202,6 @@ python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
 python3 build_plugin.py <library-name> /tmp/<library>-extracted/ \
   --source-url <root-url> \
   --version <version-label> \
-  --skill-only \
   --output-dir ~/.claude/skills/<name>-docs
 ```
 
@@ -216,7 +219,7 @@ Replace `<name>-docs` with the versioned name (e.g., `laravel-11-docs` or `react
 Run the validator to check the skill's structural integrity:
 
 ```bash
-python3 validate.py <output-dir> --skill-only
+python3 validate.py <output-dir>
 ```
 
 Do NOT pass `--sitemap` here. The original sitemap contains all crawled pages, but we intentionally filtered pages in Step 4. Passing the sitemap would cause the page count check to fail.
@@ -239,7 +242,7 @@ If validation fails, fix the identified gaps and re-validate.
 Run the accuracy verifier to compare EVERY generated file against its live source page:
 
 ```bash
-python3 verify.py <output-dir> --skill-only --screenshot-dir /tmp/<library>-screenshots
+python3 verify.py <output-dir> --screenshot-dir /tmp/<library>-screenshots
 ```
 
 This re-visits the original URL of every content file and compares key signals:
@@ -322,18 +325,17 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 | ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
 | `extract.py`      | Convert saved HTML to structured markdown    | `<sitemap.json>` `--output` `--force` `--guess-languages`                    |
-| `build_plugin.py` | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` `--skill-only` |
-| `validate.py`     | Verify skill structural integrity            | `<skill-dir>` `--skill-only`                                                 |
-| `verify.py`       | Compare generated content against live pages | `<skill-dir>` `--skill-only` `--delay` `--screenshot-dir`                    |
+| `build_plugin.py` | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
+| `validate.py`     | Verify skill structural integrity            | `<skill-dir>`                                                                |
+| `verify.py`       | Compare generated content against live pages | `<skill-dir>` `--delay` `--screenshot-dir`                                  |
 | `setup.sh`        | Create venv and install dependencies         | (none)                                                                       |
 
 Templates are in `{PLUGIN_ROOT}/templates/`:
 
 | Template                    | Used By           | Purpose                                |
 | --------------------------- | ----------------- | -------------------------------------- |
-| `SKILL_template.md`         | `build_plugin.py` | Generated SKILL.md for the docs skill  |
-| `plugin_json_template.json` | `build_plugin.py` | Generated plugin.json (plugin mode only) |
-| `section_template.md`       | `build_plugin.py` | Individual content sub-files           |
+| `SKILL_template.md`         | `build_plugin.py` | Generated SKILL.md for the docs skill |
+| `section_template.md`       | `build_plugin.py` | Individual content sub-files          |
 
 ## Critical Rules
 

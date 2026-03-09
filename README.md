@@ -239,11 +239,11 @@ crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  bui
 
 **Claude review** — Reads extracted content, groups by topic, asks user which topics to keep. Then filters out noise: blog posts, archive listings, empty pages, duplicates. User approves the final list.
 
-**`build_plugin.py --skill-only`** — Writes all pages into a flat `pages/` directory. Generates SKILL.md index with H2 sub-topic descriptions per file. With `--skill-only`, outputs just the skill directory (SKILL.md + pages/) without a plugin wrapper.
+**`build_plugin.py`** — Writes all pages into a flat `pages/` directory. Generates SKILL.md index with H2 sub-topic descriptions per file. Outputs the skill directory (SKILL.md + pages/) directly to the specified `--output-dir`.
 
-**`validate.py --skill-only`** — Structural checks: SKILL.md frontmatter, file paths resolve, no empty files.
+**`validate.py`** — Structural checks: SKILL.md frontmatter, file paths resolve, no empty files.
 
-**`verify.py --skill-only`** — Accuracy check: re-visits every source URL with Playwright, compares title, heading count, code block count, and content length against the generated markdown. Full-page screenshots of mismatched pages.
+**`verify.py`** — Accuracy check: re-visits every source URL with Playwright, compares title, heading count, code block count, and content length against the generated markdown. Full-page screenshots of mismatched pages.
 
 </details>
 
@@ -281,8 +281,7 @@ python3 build_plugin.py <library-name> <extracted-dir> [options]
 
   --version LABEL          Documentation version label (default: latest)
   --source-url URL         Original documentation URL
-  --output-dir DIR         Skill output directory
-  --skill-only             Output just SKILL.md + pages/ without plugin wrapper
+  --output-dir DIR         Skill output directory (required)
 ```
 
 **validate.py** — Check skill structural integrity
@@ -290,7 +289,6 @@ python3 build_plugin.py <library-name> <extracted-dir> [options]
 ```
 python3 validate.py <skill-dir> [options]
 
-  --skill-only             Validate a standalone skill directory (no plugin wrapper)
   --sitemap FILE           Cross-reference against original sitemap.json
 ```
 
@@ -299,7 +297,6 @@ python3 validate.py <skill-dir> [options]
 ```
 python3 verify.py <skill-dir> [options]
 
-  --skill-only             Verify a standalone skill directory (no plugin wrapper)
   --delay SECS             Base delay between requests (default: 0.5)
   --screenshot-dir DIR     Save full-page screenshots of mismatched pages
 ```
