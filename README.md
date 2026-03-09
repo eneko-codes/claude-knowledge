@@ -9,8 +9,8 @@ and navigates directly to the right file. No searching, no guessing.
 
 No extra API calls. No latency. Pre-built docs ready to install, or index your own in minutes.
 
-[Why Skills?](#why-skills-instead-of-mcp) ·
-[Available Docs](#available-documentation) ·
+[Benefits](#benefits-of-documentation-skills) ·
+[Pre-built Docs](#pre-built-documentation-skills) ·
 [Install](#installation) ·
 [Index Your Own](#index-your-own-docs)
 
@@ -18,7 +18,7 @@ No extra API calls. No latency. Pre-built docs ready to install, or index your o
 
 ---
 
-## Why Skills Instead of MCP?
+## Benefits of Documentation Skills
 
 Claude Code can access docs three ways: **WebFetch** fetches pages directly from the web, **MCP servers** (like [Context7](https://github.com/upstash/context7) or [docs-mcp-server](https://github.com/arabold/docs-mcp-server)) expose a search API over pre-indexed docs, and **skills** (this project) give Claude a local file-based index it can navigate directly.
 
@@ -62,7 +62,9 @@ Claude Code can access docs three ways: **WebFetch** fetches pages directly from
 
 ---
 
-## Available Documentation
+## Pre-built Documentation Skills
+
+Available on the knowledge Claude Code plugin marketplace (see [install](#installation) below).
 
 | Plugin | Library | Pages |
 |:-------|:--------|------:|
