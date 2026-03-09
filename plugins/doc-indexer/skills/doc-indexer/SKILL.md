@@ -73,18 +73,21 @@ python3 crawl.py <root-url> \
 - Open `/tmp/<library>-sitemap.json`
 - Check `stats.total_fetched` — confirm the page count is reasonable
 - Check `failed` array — investigate any failures
+- Check `/tmp/<library>-html/` — confirm HTML files were saved (one per page)
 - Report the crawl summary to the user: total pages discovered, fetched, failed
 
 If too many pages failed or the count seems wrong, adjust parameters and re-crawl.
 
 ### Step 3: Extract Page Content
 
-Run the extractor on the sitemap:
+Run the extractor on the saved HTML:
 
 ```bash
 python3 extract.py /tmp/<library>-sitemap.json \
   --output /tmp/<library>-extracted/
 ```
+
+This reads the HTML files saved by crawl.py — no browser or network needed.
 
 Add `--guess-languages` if the site has many unannotated code blocks — this uses Pygments to guess languages for bare ``` blocks. Only use when needed, as it may misclassify some blocks.
 
@@ -297,6 +300,7 @@ Report the final results to the user:
 
 ```bash
 rm -f /tmp/<library>-sitemap.json
+rm -rf /tmp/<library>-html/
 rm -rf /tmp/<library>-extracted/
 rm -rf /tmp/<library>-screenshots/
 ```
@@ -310,7 +314,7 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 | Script            | Purpose                                      | Key Arguments                                                                |
 | ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
-| `extract.py`      | Fetch and convert page content to markdown   | `<sitemap.json>` `--output` `--delay` `--force` `--guess-languages`          |
+| `extract.py`      | Convert saved HTML to structured markdown    | `<sitemap.json>` `--output` `--force` `--guess-languages`                    |
 | `build_plugin.py` | Assemble plugin from extracted content       | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
 | `validate.py`     | Verify plugin structural integrity           | `<plugin-dir>`                                                               |
 | `verify.py`       | Compare generated content against live pages | `<plugin-dir>` `--delay` `--screenshot-dir`                                  |

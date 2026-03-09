@@ -34,7 +34,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install Python dependencies from requirements.txt:
-#   - playwright:         Browser automation library (drives Chromium)
+#   - playwright:         Browser automation (used by crawl.py and verify.py only)
 #   - playwright-stealth: Anti-fingerprint patches to bypass bot detection
 #   - beautifulsoup4:     HTML parsing and DOM traversal
 #   - markdownify:        HTML → markdown conversion

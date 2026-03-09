@@ -267,7 +267,7 @@ crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  bui
 
 **`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL. Outputs `sitemap.json` with titles, headings, and status for every page.
 
-**`extract.py`** — Finds the main content area via 15 CSS selector heuristics, strips navigation/UI/tab labels/TOC noise, converts to markdown. Resumable — skips already-extracted pages on re-run.
+**`extract.py`** — Reads saved HTML from crawl, finds the main content area via CSS selector heuristics, strips noise, converts to markdown. No browser needed — works fully offline. Resumable — skips already-extracted pages on re-run.
 
 **Claude review** — Reads extracted content, groups by topic, asks user which topics to keep. Then filters out noise: blog posts, archive listings, empty pages, duplicates. User approves the final list.
 
@@ -296,13 +296,12 @@ python3 crawl.py <root-url> [options]
   --same-path-prefix       Only follow links under the root URL's path
 ```
 
-**extract.py** — Fetch pages and convert to structured markdown
+**extract.py** — Convert saved HTML to structured markdown
 
 ```
 python3 extract.py <sitemap.json> [options]
 
   --output DIR             Output directory for JSON files (default: extracted/)
-  --delay SECS             Base delay between requests (default: 0.5)
   --force                  Re-extract even if output file already exists
   --guess-languages        Use Pygments to guess language for unannotated code blocks
 ```
