@@ -1,40 +1,37 @@
 #!/usr/bin/env python3
 """Content extractor for crawled documentation pages.
 
-Fetches full content of every page in a sitemap, detects the main content area,
-converts HTML to markdown, classifies pages by category, and extracts code blocks
-and function signatures.
+Processes saved HTML files (from crawl.py) to extract structured content.
+crawl.py saves cleaned HTML with code block noise already removed via
+computed-style JS injection. This script parses the saved HTML, finds the
+main content area, converts to markdown, classifies pages, and extracts
+code blocks and function signatures.
 
 Architecture:
-  For each page URL in the sitemap (produced by crawl.py), this script:
-  1. Navigates to the page with Playwright (same stealth setup as the crawler)
-  2. Parses the rendered HTML with BeautifulSoup
-  3. Locates the main content area using a prioritized list of CSS selectors
+  For each page in the sitemap (with saved HTML from crawl.py):
+  1. Reads the saved HTML file (no browser needed)
+  2. Parses with BeautifulSoup
+  3. Locates the main content area using CSS selectors
   4. Strips non-content elements (nav, sidebar, footer, etc.)
-  5. Converts the cleaned HTML to markdown using markdownify (with inline
-     language detection via code_language_callback — no placeholder system)
-  6. Classifies the page into a documentation category (api-reference, tutorial, etc.)
+  5. Converts to markdown using markdownify (with inline language detection)
+  6. Classifies the page into a documentation category
   7. Extracts function signatures using language-specific regex patterns
   8. Outputs one JSON file per page with all structured data
 
 Usage:
-    python3 extract.py <sitemap.json> [--output extracted/] [--delay 1.0] [--guess-languages]
+    python3 extract.py <sitemap.json> [--output extracted/] [--force] [--guess-languages]
 """
 
 import argparse
 import json
 import logging
 import os
-import random
 import re
 import sys
-import time
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Comment
 from markdownify import markdownify as md
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,7 +45,6 @@ def parse_args():
     p = argparse.ArgumentParser(description="Extract content from crawled documentation pages")
     p.add_argument("sitemap", help="Path to sitemap.json from crawl.py")
     p.add_argument("--output", "-o", default="extracted", help="Output directory (default: extracted)")
-    p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     p.add_argument("--force", action="store_true", help="Re-extract pages even if output file already exists")
     p.add_argument("--guess-languages", action="store_true",
                    help="Use Pygments to guess language for unannotated code blocks")
@@ -108,8 +104,6 @@ STRIP_SELECTORS = [
     ".tab-list",             # Alternative tab list class
     "[role='tablist']",      # ARIA role for tab navigation lists
 ]
-
-from shared import JS_CLEAN_CODE_BLOCKS
 
 
 def find_main_content(soup):
@@ -559,50 +553,27 @@ def url_to_filename(url):
     return candidate
 
 
-def humanized_delay(base_delay):
-    """Add random jitter to delay for human-like request spacing.
-
-    Slightly less jitter than the crawler (±0.3s vs ±0.5s) since we're
-    re-visiting pages we already crawled — the server has seen us before.
-    """
-    jitter = random.uniform(-0.3, 0.3)
-    return max(0.2, base_delay + jitter)
-
-
 # ---------------------------------------------------------------------------
 # Core extraction
 # ---------------------------------------------------------------------------
 
-def extract_page(page_obj, url, guess_languages=False):
-    """Extract all structured content from a single rendered page.
+def extract_page(html, url, guess_languages=False):
+    """Extract all structured content from a saved HTML page.
 
     Orchestrates the full extraction pipeline:
-    1. Get rendered HTML from Playwright
-    2. Parse with BeautifulSoup (using lxml parser for speed)
-    3. Find main content area and extract code block metadata (read-only)
-    4. Strip non-content elements
-    5. Convert cleaned HTML to markdown using markdownify (with inline
+    1. Parse saved HTML with BeautifulSoup (using lxml parser for speed)
+    2. Find main content area and extract code block metadata (read-only)
+    3. Strip non-content elements
+    4. Convert cleaned HTML to markdown using markdownify (with inline
        language detection via code_language_callback)
-    6. Extract title, headings, signatures, warnings
-    7. Classify the page category
+    5. Extract title, headings, signatures, warnings
+    6. Classify the page category
 
     Returns a dict with all extracted data, ready to be written as JSON.
     """
-    # Step 0: Clean the live DOM via JavaScript BEFORE capturing HTML.
-    # This single injection handles three things:
-    # 1. Removes invisible/decorative elements inside <pre> (line numbers, copy
-    #    targets, annotation anchors) using computed styles — works generically
-    #    across all syntax highlighting libraries without knowing class names.
-    # 2. Unwraps div-per-line wrappers (Torchlight, Docusaurus) that cause
-    #    markdownify to emit double blank lines between every code line.
-    # 3. Expands <details> elements so collapsed content is visible.
-    try:
-        page_obj.evaluate(JS_CLEAN_CODE_BLOCKS)
-    except Exception:
-        pass  # Non-critical — BeautifulSoup fallback handles <details> below
-
-    html = page_obj.content()
-    # lxml is faster than html.parser and more lenient with malformed HTML
+    # Step 0: Parse HTML. The JS cleaning (code block noise removal, details
+    # expansion, div unwrapping) was already applied by crawl.py on the live
+    # page where computed styles were available. We just parse the saved HTML.
     soup = BeautifulSoup(html, "lxml")
 
     # Fallback: also expand <details> in the parsed DOM in case the JS injection
@@ -724,109 +695,57 @@ def main():
 
     category_counts = {}  # Track how many pages fall into each category
 
-    # Launch browser — same stealth configuration as the crawler.
-    # We reuse one browser instance for all pages to avoid the ~2s startup
-    # cost per page and to maintain session cookies.
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
-        page = context.new_page()
-        Stealth().apply_stealth_sync(page)
+    # Load the HTML directory path from the sitemap
+    html_dir = sitemap.get("html_dir", "")
+    if not html_dir or not os.path.isdir(html_dir):
+        log.error(f"HTML directory not found: {html_dir}")
+        log.error("Re-run crawl.py to generate saved HTML files")
+        sys.exit(1)
 
-        skipped = 0
-        for i, entry in enumerate(pages):
-            url = entry["url"]
+    skipped = 0
+    for i, entry in enumerate(pages):
+        url = entry["url"]
 
-            # Resumability: skip pages whose output file already exists.
-            # This allows re-running extract.py after a crash without
-            # re-fetching pages that were already successfully extracted.
-            filename = url_to_filename(url)
-            output_path = os.path.join(args.output, filename)
-            if not args.force and os.path.exists(output_path):
-                # Still need to count the category for the summary
-                try:
-                    with open(output_path, "r", encoding="utf-8") as f:
-                        cached = json.load(f)
-                    cat = cached.get("category", "conceptual")
-                    category_counts[cat] = category_counts.get(cat, 0) + 1
-                except Exception:
-                    pass
-                skipped += 1
-                continue
-
-            log.info(f"[{i+1}/{len(pages)}] {url}")
-
+        # Resumability: skip pages whose output file already exists
+        filename = url_to_filename(url)
+        output_path = os.path.join(args.output, filename)
+        if not args.force and os.path.exists(output_path):
             try:
-                # Navigate with retry logic for transient failures.
-                # First attempt: standard timeout. On failure, retry once with
-                # 5-second delay and doubled timeout before giving up.
-                response = None
-                nav_timeout = 30000
-                for attempt in range(3):
-                    try:
-                        response = page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=5000)
-                        except Exception:
-                            pass
-                        break
-                    except Exception as nav_err:
-                        if attempt < 2:
-                            log.warning(f"  Navigation attempt {attempt+1} failed: {nav_err}. Retrying...")
-                            time.sleep(5)
-                            nav_timeout *= 2  # Double timeout on retry
-                        else:
-                            raise
-
-                if response and response.status >= 400:
-                    log.warning(f"HTTP {response.status} for {url}, skipping")
-                    continue
-
-                # Run the full extraction pipeline with retry.
-                # If extraction fails (e.g., page didn't fully render), retry
-                # once after a 5-second delay with a fresh page load.
-                data = None
-                try:
-                    data = extract_page(page, url, guess_languages=args.guess_languages)
-                except Exception as extract_err:
-                    log.warning(f"  Extraction failed: {extract_err}. Retrying after 5s...")
-                    time.sleep(5)
-                    try:
-                        page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout * 2)
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=10000)
-                        except Exception:
-                            pass
-                        data = extract_page(page, url, guess_languages=args.guess_languages)
-                    except Exception as retry_err:
-                        log.error(f"  Extraction retry also failed: {retry_err}")
-                        continue
-
-                if data is None:
-                    continue
-
-                # Accumulate category counts for the summary
-                cat = data["category"]
+                with open(output_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                cat = cached.get("category", "conceptual")
                 category_counts[cat] = category_counts.get(cat, 0) + 1
+            except Exception:
+                pass
+            skipped += 1
+            continue
 
-                # Write one JSON file per page — filename already computed above
-                # (url_to_filename was called before the skip check)
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
+        log.info(f"[{i+1}/{len(pages)}] {url}")
 
-                fallback_note = " [FALLBACK]" if data.get("used_fallback_selector") else ""
-                log.info(f"  -> {cat} | {len(data['markdown'])} chars | {len(data['code_blocks'])} code blocks | {len(data['signatures'])} signatures{fallback_note}")
+        # Read the saved HTML file
+        html_file = entry.get("html_file", "")
+        html_path = os.path.join(html_dir, html_file) if html_file else ""
+        if not html_file or not os.path.exists(html_path):
+            log.warning(f"  HTML file not found: {html_file}, skipping")
+            continue
 
-            except Exception as e:
-                log.error(f"Error extracting {url}: {e}")
+        try:
+            with open(html_path, "r", encoding="utf-8") as f:
+                html = f.read()
 
-            # Rate limiting between page fetches
-            time.sleep(humanized_delay(args.delay))
+            data = extract_page(html, url, guess_languages=args.guess_languages)
 
-        browser.close()
+            cat = data["category"]
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            fallback_note = " [FALLBACK]" if data.get("used_fallback_selector") else ""
+            log.info(f"  -> {cat} | {len(data['markdown'])} chars | {len(data['code_blocks'])} code blocks | {len(data['signatures'])} signatures{fallback_note}")
+
+        except Exception as e:
+            log.error(f"Error extracting {url}: {e}")
 
     # Print extraction summary
     log.info("=" * 60)
