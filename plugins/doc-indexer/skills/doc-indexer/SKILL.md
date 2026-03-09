@@ -126,7 +126,7 @@ Group pages by topic/module by analyzing their URL paths and titles. Present as 
 
 **4c. Apply quality filter.**
 
-After the user selects topics (or for small sites), review each remaining page and decide KEEP or SKIP.
+After the user selects topics, review each remaining page and decide KEEP or SKIP.
 
 **KEEP** pages that contain:
 - API reference (function signatures, parameters, return types)
@@ -144,6 +144,13 @@ After the user selects topics (or for small sites), review each remaining page a
 - "About the project" or team pages
 - Pages with less than 100 words of actual content
 - Duplicate content (same information already in a KEEP page)
+
+**4c-extra. Flag extraction problems.**
+
+Check each page's extracted JSON for these issues:
+- `"used_fallback_selector": true` — the extractor couldn't find the content area and fell back to `<body>`. The markdown likely contains navigation/sidebar noise. Tell the user: *"This page may not have extracted cleanly — it used a fallback selector. Keep, skip, or re-extract?"*
+- Markdown looks garbled (broken tables, truncated code blocks, navigation text mixed with content) — tell the user: *"This page's markdown looks malformed. Here's an excerpt: [first 200 chars]. Keep, skip, or flag for manual review?"*
+- If a page's category seems wrong (e.g., a tutorial classified as "warning"), change the `category` field in the extracted JSON before building.
 
 **4d. Present the filter results to the user.**
 
@@ -190,21 +197,39 @@ Replace `<name>-docs` with the versioned plugin name (e.g., `laravel-11-docs` or
 - Open the generated `SKILL.md` — confirm it lists every sub-file
 - Spot-check a few sub-files for content completeness
 
-### Step 6: Validate Coverage
+### Step 6: Validate Structure
 
-Run the validator to ensure nothing was lost:
+Run the validator to check the plugin's structural integrity:
 
 ```bash
-python3 validate.py <output-dir> \
-  --sitemap /tmp/<library>-sitemap.json
+python3 validate.py <output-dir>
 ```
+
+Do NOT pass `--sitemap` here. The original sitemap contains all crawled pages, but we intentionally filtered pages in Step 4. Passing the sitemap would cause the page count check to fail.
+
+Without `--sitemap`, the validator checks:
+- plugin.json exists with required fields
+- SKILL.md has frontmatter and substantial content
+- SITEMAP.md exists
+- All file paths in SKILL.md resolve to existing files
+- No empty content files
 
 **Interpret results:**
 - Exit code 0 = all checks pass
 - Exit code 1 = gaps found — read the report and fix issues
-- Common issues: missing pages, empty files, broken internal links
 
 If validation fails, fix the identified gaps and re-validate.
+
+### Step 6b: Spot-Check Accuracy
+
+After validation passes, spot-check 3-5 generated files for accuracy:
+
+1. Pick 3-5 files from different categories (one from `api/`, one from `concepts/`, etc.)
+2. Read each file's markdown content
+3. Compare against the extracted JSON: do headings match? Is the code block count the same? Is the content roughly the same length?
+4. If any file looks garbled, truncated, or contains navigation noise — flag it to the user
+
+This is a sanity check, not a full audit. The goal is to catch obvious extraction failures before the user starts relying on the plugin.
 
 ### Step 7: Install and Finalize
 
@@ -252,14 +277,18 @@ Templates are in `{PLUGIN_ROOT}/templates/`:
 
 1. **Verbatim extraction.** Never paraphrase, summarize, or rewrite documentation content. Copy it exactly as it appears on the source site. Code blocks must be preserved character-for-character.
 
-2. **Filter before building.** Always run the review and filter step (Step 4) before building. Never build from unfiltered extracted content — noise degrades the plugin's usefulness.
+2. **Never edit extracted content.** During the review step (Step 4), you may DELETE pages (skip them) or RECLASSIFY pages (change category), but never modify the markdown content itself. The content must be exactly what the extractor produced from the original page. If content looks wrong, flag it to the user — do not attempt to fix or improve it.
 
-3. **User decides what to include.** Present the topic list and filter results to the user. Do not silently skip pages — the user might want content you would have filtered out.
+3. **Flag extraction problems.** If a page's markdown looks garbled (broken tables, navigation text mixed with content, truncated code blocks), tell the user: "This page may not have extracted cleanly — here's what it looks like: [excerpt]. Keep, skip, or re-extract?" Never silently include garbled content.
 
-4. **Validate before declaring done.** Always run `validate.py` after `build_plugin.py`. Do not skip this step. Fix all reported gaps.
+4. **Filter before building.** Always run the review and filter step (Step 4) before building. Never build from unfiltered extracted content — noise degrades the plugin's usefulness.
 
-5. **Respect rate limits.** Use the default delay (1.5s) unless the user explicitly asks for faster crawling. Do not reduce delay below 0.5s.
+5. **User decides what to include.** Present the topic list and filter results to the user. Do not silently skip pages — the user might want content you would have filtered out.
 
-6. **Report, don't assume.** After each step, report results to the user. Do not silently skip failed pages or empty extractions. The user decides how to handle issues.
+6. **Validate and spot-check.** Always run `validate.py` after `build_plugin.py`, then spot-check 3-5 files for accuracy. Do not skip these steps.
 
-7. **One browser instance.** Both `crawl.py` and `extract.py` use Playwright with stealth patches. They manage their own browser lifecycle — do not run them concurrently.
+7. **Respect rate limits.** Use the default delay (1.5s) unless the user explicitly asks for faster crawling. Do not reduce delay below 0.5s.
+
+8. **Report, don't assume.** After each step, report results to the user. Do not silently skip failed pages or empty extractions. The user decides how to handle issues.
+
+9. **One browser instance.** Both `crawl.py` and `extract.py` use Playwright with stealth patches. They manage their own browser lifecycle — do not run them concurrently.

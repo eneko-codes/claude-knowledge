@@ -112,15 +112,22 @@ def find_main_content(soup):
     threshold avoids matching empty wrapper elements.
 
     Falls back to <body> if no selector matches — this handles minimal HTML pages
-    (e.g., raw GitHub Pages with no semantic markup).
+    (e.g., raw GitHub Pages with no semantic markup). The fallback is flagged
+    via the returned used_fallback boolean so downstream code can warn about
+    potential noise from navigation/sidebar content leaking into the extraction.
+
+    Returns:
+        (element, used_fallback) tuple
     """
     for selector in CONTENT_SELECTORS:
         el = soup.select_one(selector)
         # Require >100 chars to avoid matching empty structural elements
         if el and len(el.get_text(strip=True)) > 100:
-            return el
-    # Fallback: entire body (or root soup if no body tag)
-    return soup.body if soup.body else soup
+            return el, False
+    # Fallback: entire body (or root soup if no body tag).
+    # This may capture navigation, sidebar, footer — flag it.
+    log.warning("No content selector matched, falling back to <body>")
+    return (soup.body if soup.body else soup), True
 
 
 def strip_noise(content_el):
@@ -336,27 +343,38 @@ def classify_page(title, headings, code_blocks, markdown_text):
 def extract_warnings(markdown_text):
     """Extract deprecation notices and warning callouts from markdown text.
 
-    Scans line by line for patterns like "Deprecated: ...", "Warning: ...",
-    "Removed in v2.0: ...", etc. These are surfaced separately in the generated
-    plugin so Claude can proactively warn users about deprecated APIs.
+    Only matches structured admonition patterns — lines that start with a clear
+    warning marker like "> **Warning:**", "> [!WARNING]", "**Deprecated:**", etc.
+    This avoids false positives from normal prose that merely mentions the word
+    "warning" or "deprecated" in a sentence (e.g., "this guide covers migration").
+
+    Previously this function used loose regex that matched any line containing
+    "deprecated" or "warning" anywhere, causing massive false positives (blog
+    titles, tutorial descriptions, etc.). The stricter patterns below only match
+    lines that are clearly formatted as admonitions or notices.
     """
     warnings = []
     lines = markdown_text.split("\n")
     warning_patterns = [
-        # Matches "Deprecated:", "Warning!", "Caution:", etc. followed by description
-        re.compile(r"(?:deprecated|warning|caution|danger|important)\s*[:!]?\s*(.+)", re.IGNORECASE),
-        # Matches "Removed in v2.0" or "Breaking change since 3.x" style notices
-        re.compile(r"(?:removed|breaking change)\s+(?:in|since)\s+(.+)", re.IGNORECASE),
+        # Markdown admonition: "> **Warning:**", "> **Deprecated:**", "> **Caution:**"
+        re.compile(r"^>\s*\*\*(?:Warning|Deprecated|Caution|Danger|Important)\*\*\s*[:!]\s*(.+)", re.IGNORECASE),
+        # GitHub-style alert: "> [!WARNING]", "> [!CAUTION]"
+        re.compile(r"^>\s*\[!(?:WARNING|CAUTION|DANGER|IMPORTANT)\]\s*(.*)$", re.IGNORECASE),
+        # Bold label at line start: "**Deprecated:** ...", "**Warning:** ..."
+        re.compile(r"^\*\*(?:Deprecated|Warning|Caution|Breaking Change)\*\*\s*[:!]\s*(.+)", re.IGNORECASE),
+        # Explicit deprecation notice: "Deprecated since v1.x" at line start
+        re.compile(r"^(?:Deprecated|Removed)\s+(?:since|in|as of)\s+v?\d+", re.IGNORECASE),
     ]
     for line in lines:
+        stripped = line.strip()
         for pattern in warning_patterns:
-            match = pattern.search(line)
+            match = pattern.search(stripped)
             if match:
-                # Clean up: strip markdown blockquote markers (>) and emphasis (*_)
-                warning_text = line.strip().lstrip(">").strip().lstrip("*_").rstrip("*_").strip()
-                # Skip very short matches (likely false positives) and duplicates
+                # Use the full line as the warning text, cleaned up
+                warning_text = stripped.lstrip(">").strip().lstrip("*_").rstrip("*_").strip()
                 if warning_text and len(warning_text) > 10 and warning_text not in warnings:
                     warnings.append(warning_text)
+                break  # One match per line is enough
     return warnings
 
 
@@ -447,7 +465,9 @@ def extract_page(page_obj, url, converter):
     # Step 1: Find the content area and extract code blocks FIRST.
     # Code blocks must be extracted before strip_noise() because some nav elements
     # (like "copy to clipboard" buttons) are siblings of code blocks.
-    content_el = find_main_content(soup)
+    # used_fallback is True when no content selector matched and we fell back to <body>,
+    # which may include navigation/sidebar noise — flagged in the output JSON.
+    content_el, used_fallback = find_main_content(soup)
     code_blocks = extract_code_blocks(content_el)
 
     # Step 2: Remove navigation, sidebars, footers, etc. from the content area
@@ -495,6 +515,10 @@ def extract_page(page_obj, url, converter):
         "signatures": signatures,
         "headings": headings,
         "warnings": warnings,
+        # Flag pages where content selector fell back to <body> — these may
+        # contain navigation/sidebar noise mixed into the extracted content.
+        # The LLM review step should flag these to the user for inspection.
+        "used_fallback_selector": used_fallback,
     }
 
 
