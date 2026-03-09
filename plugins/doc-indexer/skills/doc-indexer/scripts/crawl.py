@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from collections import deque
@@ -38,6 +39,8 @@ from urllib.parse import urljoin, urlparse, urldefrag
 
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
+
+from shared import JS_CLEAN_CODE_BLOCKS
 
 # Configure structured logging so crawl progress is easy to follow in the terminal.
 # Timestamps use HH:MM:SS (no date) since crawls are single-session operations.
@@ -82,6 +85,19 @@ def normalize_url(url):
     if url.endswith("/") and url.count("/") > 3:
         url = url.rstrip("/")
     return url
+
+
+def url_to_html_filename(url):
+    """Convert a URL to a filesystem-safe .html filename for saved page content."""
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    if not path:
+        path = "index"
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", path)
+    safe = re.sub(r"_+", "_", safe)
+    if len(safe) > 200:
+        safe = safe[:200]
+    return safe + ".html"
 
 
 def is_doc_link(url, path_prefix=""):
@@ -299,6 +315,13 @@ def crawl(args):
 
     # Check for an existing checkpoint to resume from
     cp_path = checkpoint_path(args.output)
+
+    # Derive HTML directory from output path: /tmp/foo-sitemap.json → /tmp/foo-html/
+    html_dir = args.output.rsplit("-sitemap.json", 1)[0] + "-html"
+    if not args.output.endswith("-sitemap.json"):
+        html_dir = args.output.rsplit(".json", 1)[0] + "-html"
+    os.makedirs(html_dir, exist_ok=True)
+
     checkpoint = load_checkpoint(cp_path)
 
     if checkpoint:
@@ -425,12 +448,25 @@ def crawl(args):
                 # Extract page metadata from the rendered DOM
                 title, headings, links = extract_page_data(page)
 
+                # Clean code blocks and capture HTML for extract.py
+                try:
+                    page.evaluate(JS_CLEAN_CODE_BLOCKS)
+                except Exception:
+                    pass  # Non-critical -- extract.py has BeautifulSoup fallback
+
+                html_content = page.content()
+                html_filename = url_to_html_filename(final_url)
+                html_path = os.path.join(html_dir, html_filename)
+                with open(html_path, "w", encoding="utf-8") as hf:
+                    hf.write(html_content)
+
                 # Store the page in our results using the final (post-redirect) URL
                 pages.append({
                     "url": final_url,
                     "title": title,
                     "headings": headings,
                     "status": status,
+                    "html_file": html_filename,
                 })
 
                 # Link discovery: scan all outgoing links for new pages to crawl.
@@ -478,6 +514,7 @@ def crawl(args):
         "crawl_date": str(date.today()),
         "domain": root_domain,
         "path_prefix": same_path_prefix_value,
+        "html_dir": html_dir,
         "pages": pages,
         "failed": failed,
         "stats": {
