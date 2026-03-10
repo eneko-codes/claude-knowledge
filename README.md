@@ -239,8 +239,9 @@ npm install
          │
          ▼
 ┌─────────────────┐     BFS traversal with Playwright+stealth
-│   crawl.py      │     Inputs:  root URL, --same-path-prefix, --max-depth
-│   (Step 2)      │     Process: launch Chromium → visit pages → extract links
+│   crawl.py      │     Inputs:  root URL, --same-path-prefix, --max-depth,
+│   (Step 2)      │              --exclude-pattern
+│                 │     Process: launch Chromium → visit pages → extract links
 │                 │              → save rendered HTML → checkpoint every 20 pages
 │                 │     Outputs: /tmp/<lib>-sitemap.json (metadata)
 │                 │              /tmp/<lib>-html/*.html  (rendered pages)
@@ -341,6 +342,7 @@ python3 crawl.py <root-url> [options]
   --max-pages N            Stop after N pages, 0 = unlimited (default: 0)
   --delay SECS             Base delay between requests (default: 0.5)
   --same-path-prefix       Only follow links under the root URL's path
+  --exclude-pattern REGEX  Skip URLs matching regex (repeatable)
 ```
 
 **extract.py** — Convert saved HTML to structured markdown

@@ -75,6 +75,25 @@ python3 crawl.py <root-url> \
   --same-path-prefix
 ```
 
+**Exclude URL patterns:** Use `--exclude-pattern <regex>` (repeatable) to skip URLs matching a regex during discovery. This prevents the crawler from wasting time fetching noise pages. Common patterns:
+
+| Pattern | Skips | Example sites |
+|---------|-------|---------------|
+| `@v?\d` | Versioned package pages (`pkg@v2`, `std@go1.26`) | pkg.go.dev |
+| `\?tab=` | Tab views (`?tab=versions`, `?tab=licenses`) | pkg.go.dev |
+| `/\d+\.x/` | Versioned doc trees (`/11.x/`, `/12.x/`) | Laravel, many frameworks |
+| `/(en\|es\|fr\|de)/` | Locale duplicates | Translated doc sites |
+| `/api/` | Auto-generated API pages | Sites with large API refs |
+
+Example with exclusion patterns:
+```bash
+python3 crawl.py "https://pkg.go.dev/std" \
+  --output /tmp/go-stdlib-sitemap.json \
+  --exclude-pattern '@go\d' \
+  --exclude-pattern '\?tab=' \
+  --max-depth 2
+```
+
 **Verify output:**
 
 - Open `/tmp/<library>-sitemap.json`
@@ -83,7 +102,7 @@ python3 crawl.py <root-url> \
 - Check `/tmp/<library>-html/` — confirm HTML files were saved (one per page)
 - Report the crawl summary to the user: total pages discovered, fetched, failed
 
-If too many pages failed or the count seems wrong, adjust parameters and re-crawl.
+If too many pages failed or the count seems wrong, adjust parameters (`--exclude-pattern`, `--same-path-prefix`, `--max-depth`, `--max-pages`) and re-crawl.
 
 ### Step 3: Extract Page Content
 
@@ -332,7 +351,7 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 
 | Script                 | Purpose                                      | Key Arguments                                                                |
 | ---------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
-| `crawl.py`             | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
+| `crawl.py`             | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` `--exclude-pattern` |
 | `extract.py`           | Extract content via Defuddle                 | `<sitemap.json>` `--output` `--force` `--guess-languages`                    |
 | `defuddle_extract.mjs` | Node.js wrapper for Defuddle (called by extract.py) | `<html-file>` `[url]`                                                 |
 | `build_plugin.py`      | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
@@ -366,3 +385,5 @@ Templates are in `{PLUGIN_ROOT}/templates/`:
 8. **Report, don't assume.** After each step, report results to the user. Do not silently skip failed pages or empty extractions. The user decides how to handle issues.
 
 9. **One browser instance.** `crawl.py` and `verify.py` use Playwright with stealth patches. They manage their own browser lifecycle — do not run them concurrently. `extract.py` does not use a browser — it processes saved HTML files via Defuddle (Node.js).
+
+10. **Never write custom scripts or modify existing scripts.** The provided scripts (`crawl.py`, `extract.py`, `build_plugin.py`, `validate.py`, `verify.py`) are the only tools you use. If a crawl produces bad results, adjust the parameters (`--same-path-prefix`, `--max-depth`, `--max-pages`, `--delay`, remove flags) and re-crawl. If adjusting parameters doesn't work after 2 attempts, report the problem to the user and ask how to proceed — do not write wrapper scripts, custom fetchers, or any other code to work around the issue. The workflow handles noise through filtering (Step 4), not through custom crawl logic.

@@ -22,7 +22,7 @@ Why BFS (breadth-first search)?
   sites with auto-generated paginated content.
 
 Usage:
-    python3 crawl.py <root-url> [--output sitemap.json] [--max-depth 10] [--delay 1.5] [--same-path-prefix]
+    python3 crawl.py <root-url> [--output sitemap.json] [--max-depth 10] [--delay 1.5] [--same-path-prefix] [--exclude-pattern REGEX]
 """
 
 import argparse
@@ -64,6 +64,8 @@ def parse_args():
     p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
     p.add_argument("--same-path-prefix", action="store_true", help="Only follow links sharing the root URL path prefix")
     p.add_argument("--max-pages", type=int, default=0, help="Stop after fetching this many pages (0 = unlimited)")
+    p.add_argument("--exclude-pattern", action="append", default=[],
+                   help="Regex pattern to exclude URLs (repeatable). URLs matching any pattern are skipped during discovery.")
     return p.parse_args()
 
 
@@ -139,14 +141,16 @@ def is_doc_link(url, path_prefix=""):
     return True
 
 
-def should_follow(url, root_domain, root_path_prefix, same_path_prefix):
+def should_follow(url, root_domain, root_path_prefix, same_path_prefix, exclude_patterns=None):
     """Gate function: decides whether a discovered link should be added to the crawl queue.
 
-    Enforces three boundaries:
+    Enforces four boundaries:
     1. Same domain — never follow external links (e.g., links to GitHub, npm)
     2. Same path prefix — when --same-path-prefix is set, restrict to the URL subtree
        (e.g., only /en/stable/* when starting from /en/stable/)
-    3. Documentation link — skip non-doc resources (see is_doc_link)
+    3. Exclude patterns — skip URLs matching any --exclude-pattern regex
+       (e.g., '@go\\d' to skip versioned pages, '\\?tab=' to skip tab views)
+    4. Documentation link — skip non-doc resources (see is_doc_link)
     """
     parsed = urlparse(url)
 
@@ -162,6 +166,14 @@ def should_follow(url, root_domain, root_path_prefix, same_path_prefix):
     # This is crucial for versioned doc sites to avoid mixing documentation versions.
     if same_path_prefix and not parsed.path.startswith(root_path_prefix):
         return False
+
+    # Exclude patterns: skip URLs matching any user-supplied regex.
+    # Checked against the full URL so patterns can match path, query, or fragment.
+    # Patterns are pre-compiled in crawl() for performance.
+    if exclude_patterns:
+        for pattern in exclude_patterns:
+            if pattern.search(url):
+                return False
 
     # Final filter: skip non-documentation resources.
     # Pass the path prefix so skip_paths work relative to the prefix too.
@@ -341,9 +353,21 @@ def crawl(args):
         pages = []
         failed = []
 
+    # Pre-compile exclusion regexes for performance — these are checked on every
+    # discovered URL, so compiled patterns avoid repeated re.compile() overhead.
+    exclude_patterns = []
+    for pattern_str in args.exclude_pattern:
+        try:
+            exclude_patterns.append(re.compile(pattern_str))
+        except re.error as e:
+            log.error(f"Invalid --exclude-pattern '{pattern_str}': {e}")
+            return None
+
     log.info(f"Starting crawl from {root_url}")
     log.info(f"Domain: {root_domain}, Path prefix: {same_path_prefix_value}")
     log.info(f"Max depth: {args.max_depth}, Delay: {args.delay}s, Same-path-prefix: {args.same_path_prefix}")
+    if exclude_patterns:
+        log.info(f"Exclude patterns: {[p.pattern for p in exclude_patterns]}")
 
     # Counter for checkpoint saving interval
     pages_since_checkpoint = 0
@@ -464,7 +488,7 @@ def crawl(args):
                 new_links = 0
                 for link in links:
                     normalized = normalize_url(link)
-                    if normalized not in visited and should_follow(normalized, root_domain, same_path_prefix_value, args.same_path_prefix):
+                    if normalized not in visited and should_follow(normalized, root_domain, same_path_prefix_value, args.same_path_prefix, exclude_patterns):
                         visited.add(normalized)
                         queue.append((normalized, depth + 1))
                         new_links += 1
