@@ -93,7 +93,11 @@ Proceed with these settings?
 
 **Decision tree:**
 
-1. **IF `discovery.method == "llms_txt"`** → report to user that BFS can be skipped. Use the llms.txt URL count as `--max-pages` hint. In the future, crawl.py may support `--from-urls` to use these directly. For now, the llms.txt data helps validate crawl completeness.
+1. **IF `discovery.method == "llms_txt"`** → report to user that BFS can be skipped. Use the saved URL file directly:
+   ```bash
+   python3 crawl.py --from-urls <urls_file from recon report> --output /tmp/<library>-sitemap.json
+   ```
+   This fetches only the curated URLs from llms.txt — no BFS crawl needed.
 
 2. **IF `discovery.method == "sitemap_xml"`** → report sitemap URL count. Use `doc_url_count` as `--max-pages` hint.
 
@@ -488,7 +492,7 @@ All scripts are in `{PLUGIN_ROOT}/scripts/`:
 | Script                 | Purpose                                      | Key Arguments                                                                                          |
 | ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `recon.py`             | Analyze site before crawling                 | `<root-url>` `--output` `--timeout`                                                                    |
-| `crawl.py`             | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` `--exclude-pattern` |
+| `crawl.py`             | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` `--exclude-pattern` `--from-urls` |
 | `extract.py`           | Extract content via Defuddle                 | `<sitemap.json>` `--output` `--force`                                                                  |
 | `defuddle_extract.mjs` | Node.js wrapper for Defuddle (called by extract.py) | `<html-file>` `[url]`                                                                           |
 | `build_plugin.py`      | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir`                           |

@@ -23,6 +23,7 @@ Why BFS (breadth-first search)?
 
 Usage:
     python3 crawl.py <root-url> [--output sitemap.json] [--max-depth 10] [--delay 1.5] [--same-path-prefix] [--exclude-pattern REGEX]
+    python3 crawl.py --from-urls <file> [--output sitemap.json] [--delay 1.5]
 """
 
 import argparse
@@ -58,7 +59,7 @@ def parse_args():
     wandering into /en/latest/ or /en/v1.x/ which are separate doc trees.
     """
     p = argparse.ArgumentParser(description="Crawl documentation site and build sitemap")
-    p.add_argument("root_url", help="Starting URL to crawl")
+    p.add_argument("root_url", nargs="?", default=None, help="Starting URL to crawl")
     p.add_argument("--output", "-o", default="sitemap.json", help="Output file path (default: sitemap.json)")
     p.add_argument("--max-depth", type=int, default=10, help="Maximum crawl depth (default: 10)")
     p.add_argument("--delay", type=float, default=0.5, help="Base delay between requests in seconds (default: 0.5)")
@@ -66,7 +67,12 @@ def parse_args():
     p.add_argument("--max-pages", type=int, default=0, help="Stop after fetching this many pages (0 = unlimited)")
     p.add_argument("--exclude-pattern", action="append", default=[],
                    help="Regex pattern to exclude URLs (repeatable). URLs matching any pattern are skipped during discovery.")
-    return p.parse_args()
+    p.add_argument("--from-urls", metavar="FILE",
+                   help="Fetch URLs from a file instead of BFS crawling. Accepts one URL per line or markdown links.")
+    args = p.parse_args()
+    if not args.from_urls and not args.root_url:
+        p.error("root_url is required unless --from-urls is provided")
+    return args
 
 
 def normalize_url(url):
@@ -538,9 +544,142 @@ def crawl(args):
     }
 
 
+def parse_url_file(filepath):
+    """Parse a URL list file, supporting plain URLs and markdown link format.
+
+    Handles llms.txt format (markdown links like `- [Title](url)`) and plain
+    URL lists (one per line). Skips blank lines and comment lines starting
+    with #.
+    """
+    urls = []
+    md_link_re = re.compile(r'\[.*?\]\((https?://[^)]+)\)')
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = md_link_re.search(line)
+            if match:
+                urls.append(match.group(1))
+            elif line.startswith("http://") or line.startswith("https://"):
+                urls.append(line)
+    return urls
+
+
+def fetch_url_list(args):
+    """Fetch a pre-defined list of URLs without BFS discovery.
+
+    Used when --from-urls is provided (e.g., from llms.txt). Visits each URL
+    with Playwright, saves HTML, and builds the same sitemap.json format that
+    extract.py expects.
+    """
+    urls = parse_url_file(args.from_urls)
+    if not urls:
+        log.error(f"No URLs found in {args.from_urls}")
+        return None
+
+    log.info(f"Fetching {len(urls)} URLs from {args.from_urls}")
+
+    # Derive root URL from first entry for metadata
+    first_parsed = urlparse(urls[0])
+    root_domain = first_parsed.hostname
+    root_url = f"{first_parsed.scheme}://{first_parsed.hostname}"
+
+    # Derive HTML directory from output path
+    html_dir = args.output.rsplit("-sitemap.json", 1)[0] + "-html"
+    if not args.output.endswith("-sitemap.json"):
+        html_dir = args.output.rsplit(".json", 1)[0] + "-html"
+    os.makedirs(html_dir, exist_ok=True)
+
+    pages = []
+    failed = []
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        )
+        page = context.new_page()
+        Stealth().apply_stealth_sync(page)
+
+        for i, url in enumerate(urls):
+            url = normalize_url(url)
+            log.info(f"[{i+1}/{len(urls)}] {url}")
+
+            try:
+                response = None
+                for attempt in range(2):
+                    try:
+                        response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=5000)
+                        except Exception:
+                            pass
+                        break
+                    except Exception as nav_err:
+                        if attempt == 0:
+                            log.warning(f"  Attempt 1 failed: {nav_err}. Retrying in 5s...")
+                            time.sleep(5)
+                        else:
+                            raise
+
+                status = response.status if response else 0
+
+                if status >= 400:
+                    failed.append({"url": url, "status": status, "reason": response.status_text if response else "Unknown"})
+                    log.warning(f"  HTTP {status}")
+                    time.sleep(humanized_delay(args.delay))
+                    continue
+
+                final_url = normalize_url(page.url)
+                title, headings, _ = extract_page_data(page)
+
+                html_content = page.content()
+                html_filename = url_to_html_filename(final_url)
+                html_path = os.path.join(html_dir, html_filename)
+                with open(html_path, "w", encoding="utf-8") as hf:
+                    hf.write(html_content)
+
+                pages.append({
+                    "url": final_url,
+                    "title": title,
+                    "headings": headings,
+                    "status": status,
+                    "html_file": html_filename,
+                })
+
+            except Exception as e:
+                failed.append({"url": url, "status": 0, "reason": str(e)})
+                log.error(f"  Error: {e}")
+
+            time.sleep(humanized_delay(args.delay))
+
+        browser.close()
+
+    return {
+        "root_url": root_url,
+        "crawl_date": str(date.today()),
+        "domain": root_domain,
+        "path_prefix": "/",
+        "html_dir": html_dir,
+        "pages": pages,
+        "failed": failed,
+        "stats": {
+            "total_discovered": len(urls),
+            "total_fetched": len(pages),
+            "total_failed": len(failed),
+        },
+    }
+
+
 def main():
     args = parse_args()
-    sitemap = crawl(args)
+
+    if args.from_urls:
+        sitemap = fetch_url_list(args)
+    else:
+        sitemap = crawl(args)
 
     # Write the sitemap to disk as pretty-printed JSON.
     # ensure_ascii=False preserves Unicode characters in page titles

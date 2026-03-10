@@ -353,6 +353,7 @@ python3 recon.py <root-url> [options]
 
 ```
 python3 crawl.py <root-url> [options]
+python3 crawl.py --from-urls <file> [options]
 
   --output FILE            Output sitemap path (default: sitemap.json)
   --max-depth N            Max link-follow depth from root (default: 10)
@@ -360,6 +361,7 @@ python3 crawl.py <root-url> [options]
   --delay SECS             Base delay between requests (default: 0.5)
   --same-path-prefix       Only follow links under the root URL's path
   --exclude-pattern REGEX  Skip URLs matching regex (repeatable)
+  --from-urls FILE         Fetch URLs from file instead of BFS crawling
 ```
 
 **extract.py** — Convert saved HTML to structured markdown

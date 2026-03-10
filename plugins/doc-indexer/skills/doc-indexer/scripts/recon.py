@@ -639,7 +639,15 @@ def probe_page_lists(origin, budget):
             # Reject HTML responses — likely a custom 404
             if "html" not in content_type.lower():
                 links = _parse_llms_txt_links(body)
-                discovery["llms_txt"] = {"exists": True, "url_count": len(links)}
+                # Save parsed URLs to a file for --from-urls consumption
+                urls_file = None
+                if links:
+                    domain_slug = re.sub(r"[^a-zA-Z0-9]", "-", urlparse(origin).hostname)
+                    urls_file = f"/tmp/{domain_slug}-llms-urls.txt"
+                    with open(urls_file, "w", encoding="utf-8") as uf:
+                        uf.write("\n".join(links) + "\n")
+                    log.info(f"  llms.txt URLs saved to {urls_file}")
+                discovery["llms_txt"] = {"exists": True, "url_count": len(links), "urls_file": urls_file}
                 log.info(f"  llms.txt: {len(links)} URLs found")
             else:
                 log.info("  llms.txt: returned HTML (likely 404)")
