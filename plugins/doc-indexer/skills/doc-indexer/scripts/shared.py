@@ -8,8 +8,8 @@
 # 1. Remove invisible/decorative elements inside <pre> (line numbers, copy targets,
 #    annotation anchors) detected via computed CSS: display:none, visibility:hidden,
 #    user-select:none, or aria-hidden="true".
-# 2. Unwrap div-per-line wrappers (Torchlight, Docusaurus) that cause markdownify to
-#    emit double blank lines between every line of code. Only triggers when ALL direct
+# 2. Unwrap div-per-line wrappers (Torchlight, Docusaurus) that cause markdown
+#    converters to emit double blank lines between every line of code. Only triggers when ALL direct
 #    children of <code> are <div> elements -- a clear div-per-line structure.
 # 3. Expand <details> elements so collapsed content is visible.
 JS_CLEAN_CODE_BLOCKS = """
