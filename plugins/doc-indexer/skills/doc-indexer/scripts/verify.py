@@ -31,8 +31,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+try:
+    from playwright.sync_api import sync_playwright
+    from playwright_stealth import Stealth
+except ImportError:
+    print("Missing dependencies. Run: cd scripts && ./setup.sh", file=sys.stderr)
+    sys.exit(1)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -359,7 +363,7 @@ def verify(args):
 
                 if issues:
                     mismatched.append((rel_path, source_url, issues))
-                    log.warning(f"  MISMATCH:")
+                    log.warning("  MISMATCH:")
                     for issue in issues:
                         log.warning(f"    - {issue}")
 
