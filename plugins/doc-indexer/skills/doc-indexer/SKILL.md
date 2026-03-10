@@ -20,7 +20,7 @@ cd {PLUGIN_ROOT}/scripts
 bash setup.sh
 ```
 
-This installs Playwright, playwright-stealth, BeautifulSoup4, markdownify, Pygments, and downloads Chromium (~200MB one-time download). All subsequent commands assume the venv is activated.
+This installs Python dependencies (Playwright, trafilatura, markdownify, etc.), downloads Chromium (~200MB), and installs the Node.js dependency (Defuddle) for content extraction. Requires Node.js 18+. All subsequent commands assume the venv is activated.
 
 ## Workflow
 
@@ -94,14 +94,21 @@ python3 extract.py /tmp/<library>-sitemap.json \
   --output /tmp/<library>-extracted/
 ```
 
-This reads the HTML files saved by crawl.py — no browser or network needed.
+This reads the HTML files saved by crawl.py and extracts content using a two-tier strategy:
+
+1. **Defuddle** (primary) — Multi-pass content detection with code block standardization. Detects languages from 9+ class/attribute patterns, removes line numbers, strips toolbar/button chrome. Outputs clean markdown directly.
+2. **trafilatura** (fallback) — If Defuddle fails, trafilatura's ensemble algorithm (own heuristics + readability-lxml + jusText) extracts clean HTML, which is then converted to markdown via markdownify with code language detection.
+
+The extraction log shows which extractor was used for each page (`[defuddle]` or `[trafilatura]`).
 
 Add `--guess-languages` if the site has many unannotated code blocks — this uses Pygments to guess languages for bare ``` blocks. Only use when needed, as it may misclassify some blocks.
 
 **Verify output:**
 
 - Check `/tmp/<library>-extracted/` contains one JSON file per crawled page
-- Report extraction summary to the user: file count
+- Review the extractor usage summary at the end of the log
+- If many pages fell back to trafilatura, the site may have unusual HTML structure — spot-check those pages
+- Report extraction summary to the user: file count, extractor breakdown
 
 ### Step 4: Review and Filter Content
 
@@ -163,7 +170,7 @@ After the user selects topics, review each remaining page and decide KEEP or SKI
 
 Check each page's extracted JSON for these issues:
 
-- `"used_fallback_selector": true` — the extractor couldn't find the content area and fell back to `<body>`. The markdown likely contains navigation/sidebar noise. Tell the user: _"This page may not have extracted cleanly — it used a fallback selector. Keep, skip, or re-extract?"_
+- `"extractor": "trafilatura"` — Defuddle failed and the fallback extractor was used. The page may have unusual HTML structure. Spot-check the markdown for quality. Tell the user: _"This page used the fallback extractor (trafilatura). Here's a preview: [first 200 chars]. Keep, skip, or re-extract?"_
 - Markdown looks garbled (broken tables, truncated code blocks, navigation text mixed with content) — tell the user: _"This page's markdown looks malformed. Here's an excerpt: [first 200 chars]. Keep, skip, or flag for manual review?"_
 - The `category` field in the extracted JSON is metadata only — it does not affect directory placement. All files go into a flat `pages/` directory.
 
@@ -303,8 +310,9 @@ Do not clean up until the user has confirmed the skill is working. They may want
 After cleaning temp files, ask the user if they also want to reclaim disk space by removing the Python virtual environment (~50MB) and the Chromium browser binary (~200MB). Explain that these are only needed by doc-indexer, and if deleted, `setup.sh` must be re-run before indexing docs again:
 
 ```
-The doc-indexer environment takes ~250MB of disk space:
+The doc-indexer environment takes ~300MB of disk space:
 - Python venv: {PLUGIN_ROOT}/scripts/.venv/ (~50MB)
+- Node modules: {PLUGIN_ROOT}/scripts/node_modules/ (~30MB)
 - Chromium browser: ~/.cache/ms-playwright/ (~200MB)
 
 These are only used when indexing new documentation. Want me to delete them
@@ -316,6 +324,7 @@ If yes:
 
 ```bash
 rm -rf {PLUGIN_ROOT}/scripts/.venv/
+rm -rf {PLUGIN_ROOT}/scripts/node_modules/
 rm -rf ~/.cache/ms-playwright/
 ```
 
@@ -323,14 +332,15 @@ rm -rf ~/.cache/ms-playwright/
 
 All scripts are in `{PLUGIN_ROOT}/scripts/`:
 
-| Script            | Purpose                                      | Key Arguments                                                                |
-| ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
-| `crawl.py`        | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
-| `extract.py`      | Convert saved HTML to structured markdown    | `<sitemap.json>` `--output` `--force` `--guess-languages`                    |
-| `build_plugin.py` | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
-| `validate.py`     | Verify skill structural integrity            | `<skill-dir>`                                                                |
-| `verify.py`       | Compare generated content against live pages | `<skill-dir>` `--delay` `--screenshot-dir`                                  |
-| `setup.sh`        | Create venv and install dependencies         | (none)                                                                       |
+| Script                 | Purpose                                      | Key Arguments                                                                |
+| ---------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| `crawl.py`             | Discover all doc pages via BFS crawl         | `<root-url>` `--output` `--max-depth` `--max-pages` `--delay` `--same-path-prefix` |
+| `extract.py`           | Extract content (Defuddle + trafilatura)     | `<sitemap.json>` `--output` `--force` `--guess-languages`                    |
+| `defuddle_extract.mjs` | Node.js wrapper for Defuddle (called by extract.py) | `<html-file>` `[url]`                                                 |
+| `build_plugin.py`      | Assemble skill from extracted content        | `<library-name>` `<extracted-dir>` `--version` `--source-url` `--output-dir` |
+| `validate.py`          | Verify skill structural integrity            | `<skill-dir>`                                                                |
+| `verify.py`            | Compare generated content against live pages | `<skill-dir>` `--delay` `--screenshot-dir`                                  |
+| `setup.sh`             | Create venv, install Python + Node.js deps   | (none)                                                                       |
 
 Templates are in `{PLUGIN_ROOT}/templates/`:
 
@@ -357,4 +367,4 @@ Templates are in `{PLUGIN_ROOT}/templates/`:
 
 8. **Report, don't assume.** After each step, report results to the user. Do not silently skip failed pages or empty extractions. The user decides how to handle issues.
 
-9. **One browser instance.** Both `crawl.py` and `extract.py` use Playwright with stealth patches. They manage their own browser lifecycle — do not run them concurrently.
+9. **One browser instance.** `crawl.py` and `verify.py` use Playwright with stealth patches. They manage their own browser lifecycle — do not run them concurrently. `extract.py` does not use a browser — it processes saved HTML files via Defuddle (Node.js) and trafilatura (Python).

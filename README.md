@@ -159,7 +159,7 @@ Multiple versions of the same library coexist side by side. For example, indexin
 
 <br>
 
-doc-indexer requires **Python 3.8+** and downloads a Chromium browser (~200MB) for crawling.
+doc-indexer requires **Python 3.8+**, **Node.js 18+**, and downloads a Chromium browser (~200MB) for crawling.
 
 **macOS** — Python comes pre-installed on macOS 12.3+.
 
@@ -201,7 +201,7 @@ sudo npx playwright install-deps chromium
 
 <br>
 
-Creates a Python venv and downloads Chromium:
+Creates a Python venv, installs Node.js dependencies, and downloads Chromium:
 
 **macOS / Linux**
 
@@ -218,6 +218,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 playwright install chromium
+npm install
 ```
 
 </details>
@@ -235,7 +236,7 @@ crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  bui
 
 **`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL, cleans code blocks via computed-style JS injection, and saves the HTML to disk. Each page is visited only once — extract.py reuses the saved HTML.
 
-**`extract.py`** — Reads saved HTML from crawl, finds the main content area via CSS selector heuristics, strips noise, converts to markdown. No browser needed — works fully offline. Resumable — skips already-extracted pages on re-run.
+**`extract.py`** — Extracts main content from saved HTML using a two-tier strategy: [Defuddle](https://github.com/kepano/defuddle) (primary) for algorithmic content detection with code block standardization, and [trafilatura](https://github.com/adbar/trafilatura) (fallback) for its ensemble extraction algorithm. No browser needed — works fully offline. Resumable — skips already-extracted pages on re-run.
 
 **Claude review** — Reads extracted content, groups by topic, asks user which topics to keep. Then filters out noise: blog posts, archive listings, empty pages, duplicates. User approves the final list.
 
@@ -312,7 +313,7 @@ python3 verify.py <skill-dir> [options]
 
 **Crawl gets blocked (403/429)** — Increase the delay: `python3 crawl.py <url> --delay 3.0`
 
-**Empty markdown extraction** — The content area heuristic may not match the site's HTML. Open an issue with the URL.
+**Empty markdown extraction** — Both Defuddle and trafilatura failed to extract content. This is rare but can happen with very unusual HTML structures. Open an issue with the URL.
 
 </details>
 

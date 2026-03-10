@@ -8,9 +8,9 @@ and compares them against the generated content. Flags mismatches.
 This catches extraction failures that structural validation (validate.py) misses:
 - Truncated content (text much shorter than the live page)
 - Missing code blocks (extractor failed to capture them)
-- Missing headings (content selector was too narrow)
-- Wrong title (breadcrumb/nav text leaked into the title)
-- Fallback selector noise (navigation text mixed with content)
+- Missing headings (extraction missed some sections)
+- Wrong title (site name or badge text leaked into the title)
+- Extraction noise (navigation text mixed with content)
 
 For any mismatches found, Claude should investigate manually — optionally
 taking a screenshot of the specific page for visual inspection.
@@ -134,13 +134,12 @@ def extract_live_signals(page):
     Uses JavaScript evaluation in the browser to get the same signals
     we extract from markdown, but ONLY from the main content area.
 
-    IMPORTANT: This must use the same content area selectors as extract.py's
-    find_main_content(). Previously, headings and code blocks were counted
-    from the full page (including sidebar/nav), causing systematic false
-    mismatches because extract.py correctly strips those elements.
+    IMPORTANT: Signals must be extracted from the main content area only,
+    not the full page. Counting headings/code blocks from the full page
+    (including sidebar/nav) causes systematic false mismatches.
     """
     # All signals are extracted from the main content area only.
-    # The selector list matches extract.py's CONTENT_SELECTORS exactly.
+    # These CSS selectors approximate the content area on the live page.
     signals = page.evaluate("""() => {
         const selectors = [
             'main', 'article', '[role="main"]', '#content', '#main-content',

@@ -2,49 +2,57 @@
 # setup.sh — One-time environment setup for doc-indexer scripts.
 #
 # Creates an isolated Python virtual environment in .venv/, installs all
-# dependencies from requirements.txt, and downloads the Chromium browser
-# binary that Playwright needs for headless crawling.
+# Python dependencies, downloads the Chromium browser binary, and installs
+# the Node.js dependency (Defuddle) for content extraction.
 #
-# This script is idempotent — safe to run multiple times. If .venv/ already
-# exists, pip will skip already-installed packages and only install missing ones.
+# This script is idempotent — safe to run multiple times.
 #
 # After running this script, activate the venv with:
 #   source .venv/bin/activate
 #
 # Requirements:
-#   - Python 3.8+ (tested with 3.9.6, 3.11, 3.12)
+#   - Python 3.8+
+#   - Node.js 18+ (for Defuddle content extraction)
 #   - ~200MB disk space for Chromium browser download
-#   - Internet connection for pip install and Playwright browser download
+#   - Internet connection for pip install, npm install, and Playwright browser download
 
-# Exit immediately if any command fails (-e flag).
-# This prevents silent failures where pip partially installs and we proceed
-# with a broken environment.
 set -e
 
-# Change to the directory containing this script, regardless of where it's
-# invoked from. This ensures .venv is always created next to the scripts.
 cd "$(dirname "$0")"
 
-# Create a Python virtual environment in .venv/ to isolate dependencies.
-# This avoids polluting the system Python installation and ensures
-# reproducible behavior across machines.
-python3 -m venv .venv
+# --- Python environment ---
 
-# Activate the venv — all subsequent pip/python commands use this environment.
+python3 -m venv .venv
 source .venv/bin/activate
 
-# Install Python dependencies from requirements.txt:
-#   - playwright:         Browser automation (used by crawl.py and verify.py only)
+# Install Python dependencies:
+#   - playwright:         Browser automation (used by crawl.py and verify.py)
 #   - playwright-stealth: Anti-fingerprint patches to bypass bot detection
 #   - beautifulsoup4:     HTML parsing and DOM traversal
-#   - markdownify:        HTML → markdown conversion
+#   - markdownify:        HTML → markdown conversion (trafilatura fallback path)
 #   - pygments:           Code language guessing for unannotated blocks
 #   - lxml:               Fast HTML parser backend for BeautifulSoup
+#   - trafilatura:        Content extraction fallback (ensemble: own algo + readability + jusText)
 pip install -r requirements.txt
 
-# Download the Chromium browser binary that Playwright will use.
-# This is a one-time ~200MB download stored in ~/.cache/ms-playwright/.
-# Subsequent runs of this command are no-ops if the browser is already installed.
+# Download the Chromium browser binary for Playwright (~200MB one-time).
 playwright install chromium
 
-echo "Setup complete. Activate with: source .venv/bin/activate"
+# --- Node.js environment ---
+
+# Check that Node.js is available (required for Defuddle content extraction)
+if ! command -v node &> /dev/null; then
+    echo "ERROR: Node.js is required but not found."
+    echo "Install Node.js 18+ from https://nodejs.org/ and re-run this script."
+    exit 1
+fi
+
+# Install Defuddle — the primary content extraction engine.
+# Multi-pass content detection with code block standardization
+# (language detection, line number removal, toolbar cleanup).
+npm install
+
+echo ""
+echo "Setup complete."
+echo "  Python venv: source .venv/bin/activate"
+echo "  Node.js deps: $(node -e 'console.log(require("./node_modules/defuddle/package.json").version)' 2>/dev/null || echo 'installed')"

@@ -2,21 +2,24 @@
 """Content extractor for crawled documentation pages.
 
 Processes saved HTML files (from crawl.py) to extract structured content.
-crawl.py saves cleaned HTML with code block noise already removed via
-computed-style JS injection. This script parses the saved HTML, finds the
-main content area, converts to markdown, classifies pages, and extracts
-code blocks and function signatures.
+Uses a two-tier extraction strategy for maximum accuracy:
+
+  Primary:  Defuddle (Node.js) — multi-pass content detection with code block
+            standardization (language detection from 9+ patterns, line number
+            removal, toolbar/header removal). Best for documentation sites.
+
+  Fallback: trafilatura — best benchmarked content extraction (F1 0.958 on
+            ScrapingHub benchmark). Internally ensembles its own algorithm +
+            readability-lxml + jusText. HTML output fed to markdownify for
+            code-block-safe markdown conversion.
 
 Architecture:
   For each page in the sitemap (with saved HTML from crawl.py):
-  1. Reads the saved HTML file (no browser needed)
-  2. Parses with BeautifulSoup
-  3. Locates the main content area using CSS selectors
-  4. Strips non-content elements (nav, sidebar, footer, etc.)
-  5. Converts to markdown using markdownify (with inline language detection)
-  6. Classifies the page into a documentation category
-  7. Extracts function signatures using language-specific regex patterns
-  8. Outputs one JSON file per page with all structured data
+  1. Try Defuddle extraction (produces markdown directly)
+  2. If Defuddle fails, fall back to trafilatura → markdownify
+  3. Extract metadata: code blocks, headings, signatures, warnings
+  4. Classify the page into a documentation category
+  5. Output one JSON file per page with all structured data
 
 Usage:
     python3 extract.py <sitemap.json> [--output extracted/] [--force] [--guess-languages]
@@ -27,11 +30,10 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
-
-from bs4 import BeautifulSoup, Comment
-from markdownify import markdownify as md
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +41,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("extract")
+
+# Resolve paths relative to this script's location so the script works
+# regardless of the current working directory when invoked.
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def parse_args():
@@ -52,127 +58,182 @@ def parse_args():
 
 
 # ---------------------------------------------------------------------------
-# Content area detection
+# Defuddle extraction (primary)
 # ---------------------------------------------------------------------------
 
-# CSS selectors for the main content area, tried in priority order.
-# Modern doc frameworks use semantic HTML (<main>, <article>) or ARIA roles,
-# while older sites use class/id conventions. We try the most specific first.
-#
-# The 100-character minimum text check (in find_main_content) prevents matching
-# an empty <main> wrapper that exists only for layout purposes.
-CONTENT_SELECTORS = [
-    "main",                # HTML5 semantic: Docusaurus, VitePress, MkDocs
-    "article",             # HTML5 semantic: Hugo, Jekyll, some custom sites
-    "[role='main']",       # ARIA role: accessibility-focused sites
-    "#content",            # Common id: Sphinx (Read the Docs), GitBook
-    "#main-content",       # Alternative id: some Confluence-derived sites
-    ".content",            # Class-based: generic CMS themes
-    ".docs-content",       # Class-based: Docusaurus v1, custom frameworks
-    ".doc-content",        # Class-based: variant spelling
-    ".markdown-body",      # GitHub-style: rendered markdown in GitHub Pages
-    ".documentation",      # Class-based: some Ruby/Python doc generators
-    ".post-content",       # Class-based: blog-style doc sites
-    ".page-content",       # Class-based: generic CMS themes
-    ".article-content",    # Class-based: article-focused layouts
-    ".rst-content",        # Sphinx: reStructuredText content area
-    ".md-content",         # MkDocs Material theme
-]
+def extract_with_defuddle(html_path, url):
+    """Extract content using Defuddle via Node.js subprocess.
 
-# Elements that appear inside the content area but are not actual documentation.
-# We remove these before converting to markdown to avoid polluting the output
-# with navigation breadcrumbs, "Edit this page" links, copy-to-clipboard buttons, etc.
-STRIP_SELECTORS = [
-    "nav",                   # Nested navigation (e.g., prev/next page links)
-    "header",                # Page headers that leak into <main>
-    "footer",                # Page footers with copyright/links
-    ".sidebar",              # Sidebar TOC that some themes put inside <main>
-    ".toc",                  # Table of contents widget
-    ".table-of-contents",    # Longer class name variant
-    ".nav-links",            # Previous/next navigation links
-    ".edit-this-page",       # "Edit on GitHub" button
-    ".page-nav",             # Page-level navigation
-    ".breadcrumb",           # Breadcrumb navigation trail
-    ".breadcrumbs",          # Plural variant
-    ".header-anchor",        # Clickable # anchor links on headings
-    ".copy-button",          # Code block copy-to-clipboard button
-    ".highlight-copy-btn",   # Alternative copy button class
-    "script",                # Inline scripts (analytics, etc.)
-    "style",                 # Inline stylesheets
-    "noscript",              # Fallback content for no-JS browsers
-    ".tabs",                 # Tab navigation bar (Pest/PHPUnit code tabs)
-    ".tab-list",             # Alternative tab list class
-    "[role='tablist']",      # ARIA role for tab navigation lists
-]
+    Defuddle (by the Obsidian CEO) uses multi-pass scoring with code block
+    standardization:
+    - Language detection from 9+ class/attribute patterns
+    - Line number removal from multiple formats
+    - Toolbar/header cleanup (copy buttons, filename labels)
+    - Multi-pass with fallback recovery when initial pass returns empty
 
-
-def find_main_content(soup):
-    """Locate the primary content element in the page DOM.
-
-    Iterates through CONTENT_SELECTORS in priority order and returns the first
-    match that contains more than 500 characters of visible text. The text length
-    threshold (raised from 100 to 500) avoids matching small nav sections or
-    empty wrapper elements.
-
-    If the first match contains a <nav> or <aside> child, it's likely a layout
-    wrapper rather than the actual content area. In that case, we try to find a
-    more specific child element (an <article>, <section>, or <div> with enough
-    text) before accepting the match.
-
-    Falls back to <body> if no selector matches — this handles minimal HTML pages
-    (e.g., raw GitHub Pages with no semantic markup). The fallback is flagged
-    via the returned used_fallback boolean so downstream code can warn about
-    potential noise from navigation/sidebar content leaking into the extraction.
-
-    Returns:
-        (element, used_fallback) tuple
+    Returns dict with {title, markdown} or None if extraction fails.
     """
-    for selector in CONTENT_SELECTORS:
-        el = soup.select_one(selector)
-        # Require >500 chars to avoid matching small nav sections or empty wrappers
-        if el and len(el.get_text(strip=True)) > 500:
-            # If the match contains <nav> or <aside>, it may be a broad layout
-            # wrapper. Try to find a more specific child element first.
-            if el.find("nav") or el.find("aside"):
-                # Look for a child article, section, or div with substantial content
-                for child_tag in ["article", "section", "div"]:
-                    for child in el.find_all(child_tag, recursive=False):
-                        child_text = child.get_text(strip=True)
-                        # The child must have substantial content AND not itself
-                        # be a nav/aside to be a better match
-                        if (len(child_text) > 500
-                                and not child.find("nav")
-                                and child.name not in ("nav", "aside")):
-                            return child, False
-                # No better child found — use the original match, it's still
-                # the best we have. strip_noise() will clean out the nav/aside.
-            return el, False
-    # Fallback: entire body (or root soup if no body tag).
-    # This may capture navigation, sidebar, footer — flag it.
-    log.warning("No content selector matched, falling back to <body>")
-    return (soup.body if soup.body else soup), True
-
-
-def strip_noise(content_el):
-    """Remove non-content elements from the content area.
-
-    Mutates the BeautifulSoup element in place by decomposing (removing from tree)
-    all elements matching STRIP_SELECTORS, plus HTML comments.
-    """
-    for selector in STRIP_SELECTORS:
-        for el in content_el.select(selector):
-            el.decompose()
-
-    # HTML comments often contain build metadata, template markers, or editor hints
-    # that would appear as visible text in the markdown output.
-    for comment in content_el.find_all(string=lambda t: isinstance(t, Comment)):
-        comment.extract()
-
-    return content_el
+    script = SCRIPT_DIR / "defuddle_extract.mjs"
+    try:
+        result = subprocess.run(
+            ["node", str(script), str(html_path), url],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            log.warning(f"  Defuddle failed (exit {result.returncode}): {result.stderr.strip()[:200]}")
+            return None
+        data = json.loads(result.stdout)
+        content = data.get("content", "")
+        if len(content.strip()) < 200:
+            log.warning(f"  Defuddle: too little content ({len(content.strip())} chars)")
+            return None
+        return {"title": data.get("title", ""), "markdown": content}
+    except subprocess.TimeoutExpired:
+        log.warning("  Defuddle: timed out after 30s")
+        return None
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+        log.warning(f"  Defuddle error: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Code block extraction
+# Trafilatura extraction (fallback)
+# ---------------------------------------------------------------------------
+
+def extract_with_trafilatura(html, url):
+    """Extract content using trafilatura (HTML output) then markdownify.
+
+    Uses trafilatura's ensemble algorithm (own heuristics + readability-lxml
+    + jusText fallbacks) for boilerplate removal, then markdownify for
+    HTML-to-markdown conversion with code block language detection.
+
+    Returns dict with {title, markdown, code_blocks} or None.
+    """
+    from trafilatura import extract as traf_extract, extract_metadata
+    from bs4 import BeautifulSoup
+    from markdownify import markdownify as md
+
+    # Get clean HTML from trafilatura's ensemble extraction
+    clean_html = traf_extract(
+        html, output_format="html",
+        include_formatting=True, include_tables=True,
+        include_links=True, url=url,
+    )
+    if not clean_html or len(clean_html.strip()) < 200:
+        log.warning("  Trafilatura: insufficient content")
+        return None
+
+    # Extract title via trafilatura's metadata extraction
+    # (uses Open Graph, JSON-LD, <title>, <h1> in priority order)
+    metadata = extract_metadata(html, default_url=url)
+    title = metadata.title if metadata and metadata.title else ""
+
+    # If trafilatura didn't find a title, try the original HTML directly
+    if not title:
+        soup = BeautifulSoup(html, "lxml")
+        h1 = soup.find("h1")
+        if h1:
+            title = h1.get_text(strip=True)
+        if not title:
+            t = soup.find("title")
+            if t:
+                title = t.get_text(strip=True)
+
+    # Extract code blocks from the clean HTML for metadata
+    clean_soup = BeautifulSoup(clean_html, "lxml")
+    code_blocks = _extract_code_blocks_from_soup(clean_soup)
+
+    # Convert clean HTML to markdown with code language detection
+    markdown = md(clean_html, heading_style="ATX", wrap=False,
+                  code_language_callback=_code_language_callback,
+                  table_infer_header=True).strip()
+
+    return {"title": title, "markdown": markdown, "code_blocks": code_blocks}
+
+
+# ---------------------------------------------------------------------------
+# Markdown parsing utilities
+# ---------------------------------------------------------------------------
+
+def extract_code_blocks_from_markdown(markdown):
+    """Parse fenced code blocks from markdown text.
+
+    Matches ```language\\n...``` patterns. Used for the Defuddle path where
+    we only have markdown (no HTML soup to parse).
+    """
+    blocks = []
+    for match in re.finditer(r'```(\w*)\n(.*?)```', markdown, re.DOTALL):
+        lang = match.group(1) or ""
+        content = match.group(2)
+        if content.strip():
+            blocks.append({"language": lang, "content": content})
+    return blocks
+
+
+def extract_headings_from_markdown(markdown):
+    """Parse ATX headings (H1-H3) from markdown text."""
+    headings = []
+    for match in re.finditer(r'^(#{1,3})\s+(.+)$', markdown, re.MULTILINE):
+        level = len(match.group(1))
+        text = match.group(2).strip()
+        # Strip trailing anchor links like {#section-id}
+        text = re.sub(r'\s*\{#[^}]+\}\s*$', '', text)
+        if text:
+            headings.append({"level": level, "text": text})
+    return headings
+
+
+def clean_title(title):
+    """Clean a page title by removing site name suffixes.
+
+    Documentation sites often append the site name to the title tag:
+    "Artisan Console | Laravel 11.x - The clean stack..."
+    "Config - MyLib Docs"
+
+    Splits on common delimiters and returns the shortest meaningful segment,
+    which is usually the actual page title.
+    """
+    if not title:
+        return title
+
+    # Split on common title delimiters
+    for sep in [" | ", " - ", " :: ", " — ", " · ", " – "]:
+        if sep in title:
+            parts = [p.strip() for p in title.split(sep) if p.strip()]
+            if len(parts) > 1:
+                # Return the shortest part that's at least 3 chars
+                # (the page title is usually shorter than the site name)
+                candidates = [p for p in parts if len(p) >= 3]
+                if candidates:
+                    return min(candidates, key=len)
+
+    return title.strip()
+
+
+def clean_markdown(markdown):
+    """Post-process extracted markdown.
+
+    Applies minimal cleanup that both extractors may need:
+    - Strip leading H1 (build_plugin.py template adds its own)
+    - Strip internal documentation links (meaningless outside the doc site)
+    - Collapse excessive blank lines
+    """
+    # Strip the leading H1 heading from the markdown content.
+    # The section template in build_plugin.py adds its own "# {title}" heading.
+    markdown = re.sub(r'^#\s+[^\n]+\n+', '', markdown, count=1)
+
+    # Strip internal documentation links — absolute paths like [Name](/docs/thing)
+    # are meaningless in the generated skill. Keep just the link text.
+    markdown = re.sub(r'\[([^\]]+)\]\(<{0,1}/[^)>]+>{0,1}\)', r'\1', markdown)
+
+    # Collapse runs of 4+ blank lines to 3
+    markdown = re.sub(r"\n{4,}", "\n\n\n", markdown)
+
+    return markdown.strip()
+
+
+# ---------------------------------------------------------------------------
+# Code block extraction from HTML (for trafilatura fallback path)
 # ---------------------------------------------------------------------------
 
 def _detect_language_from_element(el):
@@ -188,10 +249,8 @@ def _detect_language_from_element(el):
         if cls.startswith("highlight-"):
             return cls[len("highlight-"):]
         if cls.startswith("brush:"):
-            # SyntaxHighlighter convention: brush:python
             return cls[len("brush:"):].strip()
         if cls == "sourceCode":
-            # Pandoc convention: class list ["sourceCode", "python"]
             for other_cls in classes:
                 if other_cls != "sourceCode" and not other_cls.startswith("source"):
                     return other_cls
@@ -199,7 +258,6 @@ def _detect_language_from_element(el):
         if cls.startswith("sourceCode "):
             return cls[len("sourceCode "):].strip()
 
-    # data-lang / data-language attributes (Docusaurus v2, Hugo, some React sites)
     for attr in ("data-lang", "data-language", "lang"):
         val = el.get(attr, "")
         if val:
@@ -212,10 +270,7 @@ def _code_language_callback(pre_element):
     """Callback for markdownify to detect code block languages.
 
     Called by markdownify for each <pre> element during HTML→markdown conversion.
-    Checks child <code>, then <pre>, then parent <div> for language annotations
-    using _detect_language_from_element().
-
-    Returns language string or empty string.
+    Checks child <code>, then <pre>, then parent <div> for language annotations.
     """
     code = pre_element.find("code")
     if code:
@@ -239,8 +294,8 @@ def _extract_code_blocks_from_soup(content_el):
     """Extract code block metadata from <pre> elements without modifying the DOM.
 
     Read-only traversal used to capture {language, content} for metadata
-    (signatures, classify_page). Does NOT modify the DOM — markdownify handles
-    the actual conversion.
+    (signatures, classify_page). Used in the trafilatura fallback path where
+    we have clean HTML to parse.
     """
     blocks = []
     for pre in content_el.find_all("pre"):
@@ -266,6 +321,10 @@ def _extract_code_blocks_from_soup(content_el):
 
     return blocks
 
+
+# ---------------------------------------------------------------------------
+# Pygments language guessing
+# ---------------------------------------------------------------------------
 
 def _guess_code_block_languages(markdown_text):
     """Annotate bare ``` code blocks with Pygments-guessed languages.
@@ -296,45 +355,27 @@ def _guess_code_block_languages(markdown_text):
 # ---------------------------------------------------------------------------
 
 # Regex patterns for extracting function/method signatures from code blocks.
-# Each pattern targets a specific programming language's declaration syntax.
-# These are intentionally broad — we'd rather capture a false positive
-# (which is still useful context) than miss a real API signature.
 SIGNATURE_PATTERNS = [
-    # Go: func Name(args) returnType  or  func (receiver) Name(args) returnType
+    # Go: func Name(args) returnType
     re.compile(r"func\s+(?:\([^)]*\)\s+)?\w+\s*\([^)]*\)(?:\s*(?:\([^)]*\)|[^{]+?))?(?:\s*\{)?"),
-
-    # Python: def name(args) -> ReturnType:  or  async def name(args):
+    # Python: def name(args) -> ReturnType:
     re.compile(r"(?:async\s+)?def\s+\w+\s*\([^)]*\)(?:\s*->\s*[^:]+)?:"),
-
-    # TypeScript/JavaScript: function name(args): ReturnType  or  export async function
+    # TypeScript/JavaScript: function name(args): ReturnType
     re.compile(r"(?:export\s+)?(?:async\s+)?function\s+\w+\s*(?:<[^>]*>)?\s*\([^)]*\)(?:\s*:\s*[^{]+)?"),
-
-    # Rust: fn name(args) -> ReturnType  or  pub async fn name<T>(args)
+    # Rust: fn name(args) -> ReturnType
     re.compile(r"(?:pub\s+)?(?:async\s+)?fn\s+\w+\s*(?:<[^>]*>)?\s*\([^)]*\)(?:\s*->\s*[^{]+)?"),
-
     # Java/Kotlin: public static ReturnType name(args)
     re.compile(r"(?:public|private|protected)?\s*(?:static\s+)?(?:async\s+)?\w+(?:<[^>]*>)?\s+\w+\s*\([^)]*\)"),
 ]
 
 
 def extract_signatures(code_blocks):
-    """Extract function/method signatures from code blocks.
-
-    Scans each code block against language-specific regex patterns to find
-    function declarations. These signatures are surfaced in the generated
-    SKILL.md as a quick-reference section for the most common API functions.
-
-    Signatures are deduplicated and capped at 300 characters to exclude
-    excessively long generic type signatures that would be noisy.
-    """
+    """Extract function/method signatures from code blocks."""
     signatures = []
     for block in code_blocks:
         for pattern in SIGNATURE_PATTERNS:
             for match in pattern.finditer(block["content"]):
-                sig = match.group(0).strip()
-                # Remove trailing opening brace if captured
-                sig = sig.rstrip("{").strip()
-                # Skip excessively long signatures (complex generics, etc.)
+                sig = match.group(0).strip().rstrip("{").strip()
                 if len(sig) < 300 and sig not in signatures:
                     signatures.append(sig)
     return signatures
@@ -347,83 +388,44 @@ def extract_signatures(code_blocks):
 def classify_page(title, headings, code_blocks, markdown_text, url=""):
     """Classify a documentation page into one of five categories.
 
-    Categories and their heuristics:
-
-    - "warning":       Pages about deprecations, breaking changes, migrations.
-                       Detected by title keywords or body keyword density (>= 3).
-
-    - "example":       Pages dominated by code with minimal explanation.
-                       Detected by code-to-text ratio > 0.6 (60% code).
-
-    - "api-reference": API docs with function signatures, parameters, return types.
-                       Detected by keyword density OR code ratio > 0.3 with signatures.
-
-    - "tutorial":      Step-by-step guides ("Step 1", "Getting started", etc.).
-                       Detected by sequential/procedural keyword density.
-
-    - "conceptual":    Explanatory content (overviews, architecture, design docs).
-                       Default for text-heavy pages that don't match other categories.
-
-    Title matches are weighted 3x vs body matches (the title is the strongest
-    classification signal). URL path segments add +2 to the relevant category.
-    Heading structure (H2/H3 that look like function signatures) boosts api_score.
-
-    The classification is heuristic and intentionally conservative — it's better
-    to default to "conceptual" than to miscategorize an API reference as a tutorial.
-    Claude reviews classifications during the workflow and can correct them.
+    Categories: warning, example, api-reference, tutorial, conceptual.
     """
     title_lower = title.lower()
     text_lower = markdown_text.lower()
-
-    # Extract URL path for path-based classification signal
     url_path = urlparse(url).path.lower() if url else ""
 
-    # Calculate code density: ratio of code block content to total page text.
-    # High code density suggests example/reference pages rather than prose.
     text_len = len(markdown_text)
     code_len = sum(len(b["content"]) for b in code_blocks)
-    code_ratio = code_len / max(text_len, 1)  # max(_, 1) prevents division by zero
+    code_ratio = code_len / max(text_len, 1)
 
     # --- Warning detection ---
-    # Title match is an immediate classification. Body keywords need >= 3 matches
-    # (threshold raised from 2 to avoid pages that incidentally mention "deprecated").
     warning_title_indicators = ["deprecat", "breaking change", "upgrade guide",
                                 "migration guide", "end of life", "eol",
                                 "sunset", "removed in"]
     warning_body_indicators = ["deprecated", "breaking change", "end of life", "eol",
                                "sunset", "removed in", "migration guide", "upgrade guide",
                                "no longer supported", "will be removed"]
-    is_warning_title = any(ind in title_lower for ind in warning_title_indicators)
-    if is_warning_title:
+    if any(ind in title_lower for ind in warning_title_indicators):
         return "warning"
-    warning_body_score = sum(1 for ind in warning_body_indicators if ind in text_lower)
-    if warning_body_score >= 3:
+    if sum(1 for ind in warning_body_indicators if ind in text_lower) >= 3:
         return "warning"
 
-    # --- URL path signal ---
-    # URL path bonuses — add +2 to category scores for matching path segments
+    # --- URL path signals ---
     url_api_bonus = 2 if any(seg in url_path for seg in ["/api/", "/reference/", "/ref/"]) else 0
     url_tutorial_bonus = 2 if any(seg in url_path for seg in ["/tutorial/", "/guide/", "/guides/", "/getting-started/"]) else 0
     url_cli_bonus = 2 if "/cli/" in url_path else 0
-    url_troubleshoot_bonus = 2 if "/troubleshooting/" in url_path else 0
 
     # --- Heading structure signal ---
-    # If most H2/H3 headings look like function/method signatures (contain
-    # parentheses or start with a type keyword), boost api_score.
     h2h3_headings = [h["text"] for h in headings if h.get("level") in (2, 3)]
     sig_like_count = 0
     for ht in h2h3_headings:
-        # Headings with parentheses like "create(options)" or "Response.json()"
         if "(" in ht and ")" in ht:
             sig_like_count += 1
-        # Headings starting with common type prefixes: "string Name", "void Execute"
         elif re.match(r'^(?:string|int|bool|void|array|object|float|static|public|private)\s+\w+', ht, re.IGNORECASE):
             sig_like_count += 1
     heading_api_bonus = 2 if (h2h3_headings and sig_like_count > len(h2h3_headings) / 2) else 0
 
     # --- Tutorial detection ---
-    # Title-weighted: "getting started", "tutorial", "installation" in the title
-    # are strong signals. Body keywords are weaker.
     tutorial_title_indicators = ["getting started", "tutorial", "walkthrough",
                                 "quickstart", "quick start", "installation", "how to"]
     tutorial_body_indicators = ["step 1", "step 2", "tutorial", "walkthrough",
@@ -437,8 +439,6 @@ def classify_page(title, headings, code_blocks, markdown_text, url=""):
         return "tutorial"
 
     # --- API reference detection ---
-    # Title-weighted: "reference", "api" in title are strong signals.
-    # Also triggered by high function signature density.
     api_title_indicators = ["reference", "api", "helpers", "collections"]
     api_body_indicators = ["api reference", "api documentation", "function reference",
                           "method reference", "class reference", "type reference",
@@ -453,58 +453,44 @@ def classify_page(title, headings, code_blocks, markdown_text, url=""):
         return "api-reference"
 
     # --- Example detection ---
-    # Pages dominated by code with minimal prose.
     if code_ratio > 0.6 and tutorial_score < 3:
         return "example"
 
     # --- Conceptual detection ---
     concept_indicators = ["overview", "introduction", "concept", "architecture", "design",
                          "explanation", "understanding", "background"]
-    concept_score = sum(1 for ind in concept_indicators if ind in text_lower)
-    if concept_score >= 1:
+    if sum(1 for ind in concept_indicators if ind in text_lower) >= 1:
         return "conceptual"
 
-    # Final fallback based on code density
     if code_ratio > 0.4:
         return "example"
     return "conceptual"
 
 
+# ---------------------------------------------------------------------------
+# Warning extraction
+# ---------------------------------------------------------------------------
+
 def extract_warnings(markdown_text):
     """Extract deprecation notices and warning callouts from markdown text.
 
-    Only matches structured admonition patterns — lines that start with a clear
-    warning marker like "> **Warning:**", "> [!WARNING]", "**Deprecated:**", etc.
-    This avoids false positives from normal prose that merely mentions the word
-    "warning" or "deprecated" in a sentence (e.g., "this guide covers migration").
-
-    Previously this function used loose regex that matched any line containing
-    "deprecated" or "warning" anywhere, causing massive false positives (blog
-    titles, tutorial descriptions, etc.). The stricter patterns below only match
-    lines that are clearly formatted as admonitions or notices.
+    Only matches structured admonition patterns to avoid false positives.
     """
     warnings = []
-    lines = markdown_text.split("\n")
     warning_patterns = [
-        # Markdown admonition: "> **Warning:**", "> **Deprecated:**", "> **Caution:**"
         re.compile(r"^>\s*\*\*(?:Warning|Deprecated|Caution|Danger|Important)\*\*\s*[:!]\s*(.+)", re.IGNORECASE),
-        # GitHub-style alert: "> [!WARNING]", "> [!CAUTION]"
         re.compile(r"^>\s*\[!(?:WARNING|CAUTION|DANGER|IMPORTANT)\]\s*(.*)$", re.IGNORECASE),
-        # Bold label at line start: "**Deprecated:** ...", "**Warning:** ..."
         re.compile(r"^\*\*(?:Deprecated|Warning|Caution|Breaking Change)\*\*\s*[:!]\s*(.+)", re.IGNORECASE),
-        # Explicit deprecation notice: "Deprecated since v1.x" at line start
         re.compile(r"^(?:Deprecated|Removed)\s+(?:since|in|as of)\s+v?\d+", re.IGNORECASE),
     ]
-    for line in lines:
+    for line in markdown_text.split("\n"):
         stripped = line.strip()
         for pattern in warning_patterns:
-            match = pattern.search(stripped)
-            if match:
-                # Use the full line as the warning text, cleaned up
+            if pattern.search(stripped):
                 warning_text = stripped.lstrip(">").strip().lstrip("*_").rstrip("*_").strip()
                 if warning_text and len(warning_text) > 10 and warning_text not in warnings:
                     warnings.append(warning_text)
-                break  # One match per line is enough
+                break
     return warnings
 
 
@@ -512,30 +498,15 @@ def extract_warnings(markdown_text):
 # Utility functions
 # ---------------------------------------------------------------------------
 
-# Module-level set for tracking generated filenames across calls to url_to_filename.
-# Prevents collisions when two different URLs produce the same filename
-# (e.g., /docs/config and /api/config both become "config.json").
 _used_filenames = set()
 
 
 def url_to_filename(url):
-    """Convert a URL to a filesystem-safe filename for the extracted JSON.
-
-    Strategy:
-    - Use the URL path as the base (strip domain, scheme, query)
-    - Replace non-alphanumeric characters with underscores
-    - Collapse consecutive underscores
-    - Truncate to 200 chars to stay within filesystem limits
-    - Append .json extension
-    - Detect collisions and append -1, -2, etc. if needed
-
-    Example: https://docs.example.com/en/stable/api/config.html → en_stable_api_config.html.json
-    """
+    """Convert a URL to a filesystem-safe filename for the extracted JSON."""
     parsed = urlparse(url)
     path = parsed.path.strip("/")
     if not path:
         path = "index"
-    # Replace anything that isn't alphanumeric, dot, dash, or underscore
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", path)
     safe = re.sub(r"_+", "_", safe)
     if len(safe) > 200:
@@ -557,103 +528,49 @@ def url_to_filename(url):
 # Core extraction
 # ---------------------------------------------------------------------------
 
-def extract_page(html, url, guess_languages=False):
-    """Extract all structured content from a saved HTML page.
+def extract_page(html, html_path, url, guess_languages=False):
+    """Extract content from a saved HTML page.
 
-    Orchestrates the full extraction pipeline:
-    1. Parse saved HTML with BeautifulSoup (using lxml parser for speed)
-    2. Find main content area and extract code block metadata (read-only)
-    3. Strip non-content elements
-    4. Convert cleaned HTML to markdown using markdownify (with inline
-       language detection via code_language_callback)
-    5. Extract title, headings, signatures, warnings
-    6. Classify the page category
-
-    Returns a dict with all extracted data, ready to be written as JSON.
+    Pipeline:
+    1. Try Defuddle (best code block handling, multi-pass recovery)
+    2. Fall back to trafilatura (best benchmarked accuracy, internal ensemble)
+    3. Extract metadata from the resulting markdown
+    4. Classify the page
     """
-    # Step 0: Parse HTML. The JS cleaning (code block noise removal, details
-    # expansion, div unwrapping) was already applied by crawl.py on the live
-    # page where computed styles were available. We just parse the saved HTML.
-    soup = BeautifulSoup(html, "lxml")
+    # Try Defuddle first (primary extractor)
+    result = extract_with_defuddle(html_path, url)
+    extractor = "defuddle"
 
-    # Fallback: also expand <details> in the parsed DOM in case the JS injection
-    # didn't cover dynamically inserted elements or the page blocked evaluate().
-    for details in soup.find_all("details"):
-        details["open"] = ""
+    # Fall back to trafilatura if Defuddle fails
+    if result is None:
+        result = extract_with_trafilatura(html, url)
+        extractor = "trafilatura"
 
-    # Step 1: Find the content area and extract code block metadata (read-only).
-    # _extract_code_blocks_from_soup does NOT modify the DOM — it just captures
-    # {language, content} for metadata (signatures, classify_page).
-    content_el, used_fallback = find_main_content(soup)
-    code_blocks = _extract_code_blocks_from_soup(content_el)
+    if result is None:
+        log.error(f"  Both extractors failed for {url}")
+        return None
 
-    # Step 2: Remove navigation, sidebars, footers, etc. from the content area.
-    content_el = strip_noise(content_el)
+    title = clean_title(result["title"])
+    markdown = result["markdown"]
 
-    # Step 3: Convert the cleaned HTML to markdown using markdownify.
-    # Language annotations are detected inline via _code_language_callback —
-    # no placeholder system needed.
-    markdown = md(str(content_el), heading_style="ATX", wrap=False,
-                  code_language_callback=_code_language_callback,
-                  table_infer_header=True).strip()
-
-    # Optional: guess languages for unannotated code blocks using Pygments
+    # Post-process markdown
+    markdown = clean_markdown(markdown)
     if guess_languages:
         markdown = _guess_code_block_languages(markdown)
 
-    # Clean internal documentation links.
-    # Doc sites often have internal links like [Container](/docs/12.x/container) or
-    # [Container](</docs/12.x/container>). These absolute paths are meaningless in
-    # the generated plugin. Convert them to just the link text (strip the URL).
-    markdown = re.sub(r'\[([^\]]+)\]\(<{0,1}/[^)>]+>{0,1}\)', r'\1', markdown)
+    # Extract code blocks: use HTML-derived blocks from trafilatura path
+    # (better language detection from class attributes), or parse from
+    # markdown for the Defuddle path.
+    code_blocks = result.get("code_blocks") or extract_code_blocks_from_markdown(markdown)
 
-    # Strip inline table of contents — anchor link lists at the top of pages.
-    # These are navigation artifacts like "* [Section Name](<#anchor>)" that
-    # are redundant with the actual headings in the body.
-    markdown = re.sub(r'^\s*\*\s+\[([^\]]+)\]\(<#[^>]+>\)\s*$', '', markdown, flags=re.MULTILINE)
+    # Extract headings from markdown
+    headings = extract_headings_from_markdown(markdown)
 
-    # Strip tab switcher UI labels that leak from interactive doc elements.
-    # Doc sites use tabbed code examples (e.g., Pest/PHPUnit, macOS/Windows/Linux)
-    # and the tab labels appear as raw text lines in the extracted markdown.
-    tab_patterns = [
-        r'^\s*Pest PHPUnit\s*$',
-        r'^\s*macOS Windows PowerShell Linux\s*$',
-    ]
-    for tp in tab_patterns:
-        markdown = re.sub(tp, '', markdown, flags=re.MULTILINE)
-
-    # Strip the leading H1 heading from the markdown content.
-    # The section template in build_plugin.py adds its own "# {title}" heading,
-    # so the H1 from markdownify conversion creates a duplicate.
-    markdown = re.sub(r'^#\s+[^\n]+\n+', '', markdown, count=1)
-
-    # Clean up: collapse runs of 4+ blank lines to 3 (keeps readability without waste)
-    markdown = re.sub(r"\n{4,}", "\n\n\n", markdown)
-
-    # Step 4: Extract the page title — prefer H1 over <title> since the latter
-    # often includes the site name suffix ("Config - MyLib Docs")
-    title = ""
-    h1 = soup.find("h1")
-    if h1:
-        title = h1.get_text(strip=True)
-    if not title:
-        title_tag = soup.find("title")
-        if title_tag:
-            title = title_tag.get_text(strip=True)
-
-    # Step 5: Extract H1-H3 headings for structural metadata
-    headings = []
-    for h in content_el.find_all(["h1", "h2", "h3"]):
-        headings.append({
-            "level": int(h.name[1]),
-            "text": h.get_text(strip=True),
-        })
-
-    # Step 6: Extract function signatures and deprecation warnings
+    # Extract function signatures and deprecation warnings
     signatures = extract_signatures(code_blocks)
     warnings = extract_warnings(markdown)
 
-    # Step 7: Classify into a documentation category
+    # Classify page category
     category = classify_page(title, headings, code_blocks, markdown, url)
 
     return {
@@ -665,7 +582,7 @@ def extract_page(html, url, guess_languages=False):
         "signatures": signatures,
         "headings": headings,
         "warnings": warnings,
-        "used_fallback_selector": used_fallback,
+        "extractor": extractor,
     }
 
 
@@ -676,10 +593,8 @@ def extract_page(html, url, guess_languages=False):
 def main():
     args = parse_args()
 
-    # Reset module-level state for clean runs (matters if imported as a module)
     _used_filenames.clear()
 
-    # Load the sitemap produced by crawl.py
     with open(args.sitemap, "r", encoding="utf-8") as f:
         sitemap = json.load(f)
 
@@ -690,23 +605,21 @@ def main():
 
     log.info(f"Extracting content from {len(pages)} pages")
 
-    # Create output directory (no error if it already exists)
     os.makedirs(args.output, exist_ok=True)
 
-    category_counts = {}  # Track how many pages fall into each category
-
-    # Load the HTML directory path from the sitemap
     html_dir = sitemap.get("html_dir", "")
     if not html_dir or not os.path.isdir(html_dir):
         log.error(f"HTML directory not found: {html_dir}")
         log.error("Re-run crawl.py to generate saved HTML files")
         sys.exit(1)
 
+    category_counts = {}
+    extractor_counts = {"defuddle": 0, "trafilatura": 0, "failed": 0}
     skipped = 0
+
     for i, entry in enumerate(pages):
         url = entry["url"]
 
-        # Resumability: skip pages whose output file already exists
         filename = url_to_filename(url)
         output_path = os.path.join(args.output, filename)
         if not args.force and os.path.exists(output_path):
@@ -722,7 +635,6 @@ def main():
 
         log.info(f"[{i+1}/{len(pages)}] {url}")
 
-        # Read the saved HTML file
         html_file = entry.get("html_file", "")
         html_path = os.path.join(html_dir, html_file) if html_file else ""
         if not html_file or not os.path.exists(html_path):
@@ -733,27 +645,39 @@ def main():
             with open(html_path, "r", encoding="utf-8") as f:
                 html = f.read()
 
-            data = extract_page(html, url, guess_languages=args.guess_languages)
+            data = extract_page(html, html_path, url, guess_languages=args.guess_languages)
+
+            if data is None:
+                extractor_counts["failed"] += 1
+                continue
 
             cat = data["category"]
             category_counts[cat] = category_counts.get(cat, 0) + 1
+            extractor_counts[data["extractor"]] += 1
 
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
-            fallback_note = " [FALLBACK]" if data.get("used_fallback_selector") else ""
-            log.info(f"  -> {cat} | {len(data['markdown'])} chars | {len(data['code_blocks'])} code blocks | {len(data['signatures'])} signatures{fallback_note}")
+            ext = data["extractor"]
+            log.info(f"  -> {cat} | {len(data['markdown'])} chars | "
+                     f"{len(data['code_blocks'])} code blocks | "
+                     f"{len(data['signatures'])} sigs | [{ext}]")
 
         except Exception as e:
             log.error(f"Error extracting {url}: {e}")
+            extractor_counts["failed"] += 1
 
-    # Print extraction summary
+    # Summary
     log.info("=" * 60)
     log.info("Extraction complete")
     log.info(f"Output directory: {args.output}")
     log.info(f"Total pages extracted: {sum(category_counts.values())}")
     if skipped:
         log.info(f"Skipped (already extracted): {skipped}")
+    log.info("Extractor usage:")
+    for ext, count in sorted(extractor_counts.items()):
+        if count > 0:
+            log.info(f"  {ext}: {count}")
     log.info("Category breakdown:")
     for cat, count in sorted(category_counts.items()):
         log.info(f"  {cat}: {count}")
