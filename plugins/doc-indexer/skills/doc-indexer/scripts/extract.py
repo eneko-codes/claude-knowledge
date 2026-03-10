@@ -77,7 +77,7 @@ def extract_with_defuddle(html_path, url):
     try:
         result = subprocess.run(
             ["node", str(script), str(html_path), url],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:
             log.warning(f"  Defuddle failed (exit {result.returncode}): {result.stderr.strip()[:200]}")
@@ -89,7 +89,7 @@ def extract_with_defuddle(html_path, url):
             return None
         return {"title": data.get("title", ""), "markdown": content}
     except subprocess.TimeoutExpired:
-        log.warning("  Defuddle: timed out after 30s")
+        log.warning("  Defuddle: timed out after 120s")
         return None
     except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
         log.warning(f"  Defuddle error: {e}")
