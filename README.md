@@ -288,9 +288,7 @@ python3 build_plugin.py <library-name> <extracted-dir> [options]
 **validate.py** — Check skill structural integrity
 
 ```
-python3 validate.py <skill-dir> [options]
-
-  --sitemap FILE           Cross-reference against original sitemap.json
+python3 validate.py <skill-dir>
 ```
 
 **verify.py** — Compare generated content against live source pages

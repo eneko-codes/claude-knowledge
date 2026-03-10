@@ -231,9 +231,7 @@ Run the validator to check the skill's structural integrity:
 python3 validate.py <output-dir>
 ```
 
-Do NOT pass `--sitemap` here. The original sitemap contains all crawled pages, but we intentionally filtered pages in Step 4. Passing the sitemap would cause the page count check to fail.
-
-Without `--sitemap`, the validator checks:
+The validator checks:
 
 - SKILL.md has frontmatter and substantial content
 - All file paths in SKILL.md resolve to existing files
