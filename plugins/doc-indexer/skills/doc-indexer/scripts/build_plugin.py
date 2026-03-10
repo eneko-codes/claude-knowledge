@@ -95,6 +95,82 @@ def sanitize_filename(text):
     return safe or "untitled"
 
 
+# ---------------------------------------------------------------------------
+# Description term derivation
+# ---------------------------------------------------------------------------
+
+# Domain-specific term pools — each maps a signal (found in titles, headings,
+# URL paths, or code block languages) to the description terms it suggests.
+# Terms are checked in priority order; the first matches win.
+_DOMAIN_SIGNALS = [
+    # Languages / syntax-heavy docs
+    ({"syntax", "grammar", "specification", "language reference", "type system", "generics", "concurrency"},
+     ["syntax", "language features", "types", "standard library"]),
+    # CLI tools
+    ({"command", "commands", "subcommand", "flags", "cli", "usage:", "shell"},
+     ["commands", "CLI usage", "flags", "options"]),
+    # Databases / query-heavy
+    ({"query", "queries", "sql", "schema", "index", "table", "migration", "orm"},
+     ["queries", "schema design", "data types", "migrations"]),
+    # Infrastructure / cloud
+    ({"resource", "provider", "manifest", "deploy", "terraform", "kubernetes", "helm", "cluster"},
+     ["resources", "deployment", "configuration", "infrastructure"]),
+    # UI / component libraries
+    ({"component", "components", "hook", "hooks", "rendering", "state", "props", "jsx", "tsx"},
+     ["components", "hooks", "rendering", "state management"]),
+    # Data science / math
+    ({"array", "dataframe", "tensor", "numpy", "pandas", "plot", "matplotlib", "scipy"},
+     ["functions", "data structures", "computation", "visualization"]),
+]
+
+# Fallback terms when no domain signal matches strongly enough.
+_DEFAULT_TERMS = ["API", "configuration", "usage patterns", "troubleshooting"]
+
+
+def derive_description_terms(pages):
+    """Analyze extracted pages to pick domain-appropriate description terms.
+
+    Scans page titles, H2/H3 headings, and code block languages for domain
+    signals. Returns a list of 3-5 terms that best describe what the docs cover.
+    """
+    # Build a bag of lowercase tokens from titles and headings
+    tokens = set()
+    for page in pages:
+        title = page.get("title", "").lower()
+        tokens.update(title.split())
+        for h in page.get("headings", []):
+            text = h.get("text", "").lower()
+            tokens.update(text.split())
+            # Also add the full heading text for multi-word signal matching
+            tokens.add(text)
+        # Add code block languages as signals
+        for block in page.get("code_blocks", []):
+            lang = block.get("language", "").lower()
+            if lang:
+                tokens.add(lang)
+        # Add URL path segments
+        url = page.get("url", "")
+        if url:
+            from urllib.parse import urlparse
+            path = urlparse(url).path.lower()
+            tokens.update(seg for seg in path.split("/") if seg)
+
+    # Score each domain by counting how many of its signal words appear
+    best_terms = None
+    best_score = 0
+    for signals, terms in _DOMAIN_SIGNALS:
+        score = sum(1 for s in signals if s in tokens)
+        if score > best_score:
+            best_score = score
+            best_terms = terms
+
+    # Require at least 2 signal hits to override the default
+    if best_score >= 2 and best_terms:
+        return best_terms
+
+    return _DEFAULT_TERMS
+
+
 
 # ---------------------------------------------------------------------------
 # Template handling
@@ -182,6 +258,9 @@ def generate_skill_md(library_name, versioned_library, skill_name, pages, source
     else:
         version_triggers = ""
 
+    # Derive domain-appropriate description terms from the actual content
+    description_terms = ", ".join(derive_description_terms(pages))
+
     return render_template(
         template,
         library_name=library_name,
@@ -190,6 +269,7 @@ def generate_skill_md(library_name, versioned_library, skill_name, pages, source
         library_name_title=library_name.replace("-", " ").title(),
         version=version,
         version_triggers=version_triggers,
+        description_terms=description_terms,
         source_url=source_url,
         total_pages=len(pages),
         category_summary=category_summary,

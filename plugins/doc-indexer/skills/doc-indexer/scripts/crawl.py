@@ -31,16 +31,14 @@ import logging
 import os
 import random
 import re
-import sys
 import time
 from collections import deque
 from datetime import date
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import urlparse, urldefrag
 
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
-from shared import JS_CLEAN_CODE_BLOCKS
 
 # Configure structured logging so crawl progress is easy to follow in the terminal.
 # Timestamps use HH:MM:SS (no date) since crawls are single-session operations.
@@ -368,9 +366,6 @@ def crawl(args):
         # Apply stealth patches — modifies navigator.webdriver, chrome.runtime,
         # WebGL renderer, and ~20 other fingerprint vectors to appear as a normal
         # Chrome browser. This is what lets us bypass Cloudflare's bot detection.
-        # Apply stealth patches — modifies navigator.webdriver, chrome.runtime,
-        # WebGL renderer, and ~20 other fingerprint vectors to appear as a normal
-        # Chrome browser. This is what lets us bypass Cloudflare's bot detection.
         # playwright-stealth v2 uses Stealth().apply_stealth_sync() instead of stealth_sync().
         Stealth().apply_stealth_sync(page)
 
@@ -447,12 +442,6 @@ def crawl(args):
 
                 # Extract page metadata from the rendered DOM
                 title, headings, links = extract_page_data(page)
-
-                # Clean code blocks and capture HTML for extract.py
-                try:
-                    page.evaluate(JS_CLEAN_CODE_BLOCKS)
-                except Exception:
-                    pass  # Non-critical -- extract.py has BeautifulSoup fallback
 
                 html_content = page.content()
                 html_filename = url_to_html_filename(final_url)

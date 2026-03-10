@@ -28,11 +28,7 @@ source .venv/bin/activate
 # Install Python dependencies:
 #   - playwright:         Browser automation (used by crawl.py and verify.py)
 #   - playwright-stealth: Anti-fingerprint patches to bypass bot detection
-#   - beautifulsoup4:     HTML parsing and DOM traversal
-#   - markdownify:        HTML → markdown conversion (trafilatura fallback path)
 #   - pygments:           Code language guessing for unannotated blocks
-#   - lxml:               Fast HTML parser backend for BeautifulSoup
-#   - trafilatura:        Content extraction fallback (ensemble: own algo + readability + jusText)
 pip install -r requirements.txt
 
 # Download the Chromium browser binary for Playwright (~200MB one-time).

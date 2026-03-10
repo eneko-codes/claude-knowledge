@@ -229,12 +229,90 @@ npm install
 <br>
 
 ```
-crawl.py  ──>  extract.py  ──>  [Claude reviews & filters]  ──>  build_plugin.py  ──>  validate.py  ──>  verify.py
-(URLs + HTML)   (markdown)       (user picks topics,                (skill files)        (structure)       (accuracy)
-                                  noise removed)
+┌─────────────────────────────────────────────────────────────────────┐
+│                      DOC-INDEXER PIPELINE                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────┐
+    │ setup.sh │  One-time: create .venv, install Python deps,
+    └────┬─────┘  download Chromium, npm install Defuddle
+         │
+         ▼
+┌─────────────────┐     BFS traversal with Playwright+stealth
+│   crawl.py      │     Inputs:  root URL, --same-path-prefix, --max-depth
+│   (Step 2)      │     Process: launch Chromium → visit pages → extract links
+│                 │              → save rendered HTML → checkpoint every 20 pages
+│                 │     Outputs: /tmp/<lib>-sitemap.json (metadata)
+│                 │              /tmp/<lib>-html/*.html  (rendered pages)
+└────────┬────────┘
+         │  sitemap.json + saved HTML files
+         ▼
+┌─────────────────┐     Per-page content extraction
+│  extract.py     │     Inputs:  sitemap.json, /tmp/<lib>-html/
+│  (Step 3)       │     Process: for each HTML file:
+│        │        │       ┌──────────────────────────┐
+│        ├───────►│───────│ defuddle_extract.mjs     │ Node.js subprocess
+│        │        │       │ (Defuddle → markdown)    │ per HTML file
+│        │        │       └──────────────────────────┘
+│                 │              → parse markdown: code blocks, headings, sigs
+│                 │              → classify page category
+│                 │              → Pygments language guess (optional)
+│                 │     Outputs: /tmp/<lib>-extracted/*.json (one per page)
+└────────┬────────┘
+         │  extracted JSON files
+         ▼
+┌─────────────────┐     Human-in-the-loop curation
+│  Claude Agent   │     Process: read extracted JSONs → group by topic
+│  (Step 4)       │              → present to user → user picks topics
+│                 │              → quality filter (KEEP/SKIP) → user confirms
+│                 │              → delete skipped JSON files
+│                 │     Output:  filtered /tmp/<lib>-extracted/ (only kept pages)
+└────────┬────────┘
+         │  filtered extracted JSONs
+         ▼
+┌─────────────────┐     Assemble skill from filtered content
+│ build_plugin.py │     Inputs:  library name, extracted dir, version, source URL
+│   (Step 5)      │     Process: load JSONs → generate pages/*.md from template
+│                 │              → generate SKILL.md (index + file listing)
+│                 │     Outputs: <output-dir>/SKILL.md
+│                 │              <output-dir>/pages/*.md
+│                 │     Templates used:
+│                 │       ├── SKILL_template.md
+│                 │       └── section_template.md
+└────────┬────────┘
+         │  built skill directory
+         ▼
+┌─────────────────┐     Structural integrity checks
+│  validate.py    │     Inputs:  skill dir, --extracted-dir
+│   (Step 6)      │     Checks:  SKILL.md frontmatter ✓
+│                 │              link resolution (all paths exist) ✓
+│                 │              no empty files ✓
+│                 │              page count matches extracted ✓
+│                 │              section coverage ≥ 90% ✓
+│                 │              signature coverage ≥ 80% ✓
+│                 │     Output:  exit 0 (pass) or exit 1 (fail) + report
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     Live accuracy verification
+│   verify.py     │     Inputs:  skill dir, --screenshot-dir
+│   (Step 6b)     │     Process: for each pages/*.md file:
+│                 │              → extract source URL from "> Source:" line
+│                 │              → re-visit live page with Playwright+stealth
+│                 │              → re-extract via Defuddle for baseline
+│                 │              → compare signals (title, headings, code, length)
+│                 │              → screenshot mismatched pages
+│                 │     Output:  exit 0 (pass) or exit 1 (mismatches) + report
+└────────┬────────┘
+         │
+         ▼
+    ┌──────────┐
+    │ FINALIZE │  Skill is auto-discovered from .claude/skills/
+    │ (Step 7) │  Clean up /tmp/ files, optionally delete .venv + Chromium
+    └──────────┘
 ```
 
-**`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL, cleans code blocks via computed-style JS injection, and saves the HTML to disk. Each page is visited only once — extract.py reuses the saved HTML.
+**`crawl.py`** — Stealth Chromium browser with anti-fingerprint patches. BFS-crawls from the root URL and saves the HTML to disk. Each page is visited only once — extract.py reuses the saved HTML.
 
 **`extract.py`** — Extracts main content from saved HTML using [Defuddle](https://github.com/kepano/defuddle) for algorithmic content detection with code block standardization (language detection, line number removal, toolbar cleanup). No browser needed — works fully offline. Resumable — skips already-extracted pages on re-run.
 

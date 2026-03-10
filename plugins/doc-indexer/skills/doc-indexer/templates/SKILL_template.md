@@ -2,7 +2,7 @@
 name: {versioned_library}-docs
 description: >
   {library_name_title} ({version}) documentation reference. Use when asked about {library_name},
-  its API, configuration, usage patterns, or troubleshooting.
+  its {description_terms}.
   {version_triggers}
 ---
 

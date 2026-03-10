@@ -62,17 +62,6 @@ def humanized_delay(base_delay):
     return max(0.2, base_delay + jitter)
 
 
-def find_skill_dir(plugin_dir):
-    """Find the skills/<name>/ directory inside the plugin."""
-    skills_dir = plugin_dir / "skills"
-    if not skills_dir.exists():
-        return None
-    for child in skills_dir.iterdir():
-        if child.is_dir() and (child / "SKILL.md").exists():
-            return child
-    return None
-
-
 def collect_content_files(skill_dir):
     """Collect all markdown content files (excluding SKILL.md).
 
@@ -82,8 +71,8 @@ def collect_content_files(skill_dir):
     for md_file in sorted(skill_dir.rglob("*.md")):
         rel = md_file.relative_to(skill_dir)
         name = str(rel)
-        # Skip index files — they're generated, not extracted from a source page
-        if name == "SKILL.md" or name.startswith("index/"):
+        # Skip SKILL.md — it's generated, not extracted from a source page
+        if name == "SKILL.md":
             continue
         files.append((name, md_file))
     return files
